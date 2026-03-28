@@ -1,4 +1,5 @@
 pub mod db;
+pub mod known_ports;
 pub mod scanner;
 pub mod template;
 
@@ -77,12 +78,30 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
         .iter()
         .map(|&port| {
             let app = apps.iter().find(|a| a.port == i64::from(port));
-            PortInfo {
-                port,
-                name: app.map(|a| a.name.clone()),
-                category: app.map(|a| a.category.clone()),
-                registered: app.is_some(),
-                alive: true,
+            if let Some(app) = app {
+                PortInfo {
+                    port,
+                    name: Some(app.name.clone()),
+                    category: Some(app.category.clone()),
+                    registered: true,
+                    alive: true,
+                }
+            } else if let Some(known) = known_ports::lookup(port) {
+                PortInfo {
+                    port,
+                    name: Some(known.name.to_string()),
+                    category: Some("macos".to_string()),
+                    registered: false,
+                    alive: true,
+                }
+            } else {
+                PortInfo {
+                    port,
+                    name: None,
+                    category: None,
+                    registered: false,
+                    alive: true,
+                }
             }
         })
         .collect();
@@ -261,10 +280,12 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
     if !unregistered.is_empty() {
         let _ = writeln!(
             md,
-            "\n## Unregistered Open Ports\n\n| Port | URL |\n|------|-----|"
+            "\n## Other Open Ports\n\n| Port | Name | URL |\n|------|------|-----|"
         );
         for port in &unregistered {
-            let _ = writeln!(md, "| {port} | http://localhost:{port} |");
+            let name = known_ports::lookup(*port)
+                .map_or("—", |k| k.name);
+            let _ = writeln!(md, "| {port} | {name} | http://localhost:{port} |");
         }
     }
 

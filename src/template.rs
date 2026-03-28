@@ -44,6 +44,7 @@ pub fn render(
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.88em' font-size='80' fill='%23999'>◎</text></svg>" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>portmap</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -59,7 +60,7 @@ pub fn render(
     <nav>
       <div class="nav-left">
         <span class="logo">&#x25ce;</span>
-        <h1>localhost</h1>
+        <h1>portmap</h1>
         <span class="pill">{total} port{plural}</span>
       </div>
       <div class="nav-right">
@@ -91,15 +92,27 @@ fn build_rows(alive_ports: &[u16], apps: &[App]) -> (usize, String) {
     let mut rows = String::new();
     let mut count = 0;
 
+    let mut macos_rows = String::new();
+    let mut macos_count = 0;
+
+    // Alive ports: registered and unregistered (non-macOS) first
     for &port in alive_ports {
         let app = apps.iter().find(|a| a.port == i64::from(port));
-        let name = app.map_or("", |a| a.name.as_str());
-        let category = app.map_or("", |a| a.category.as_str());
-        let app_id = app.map_or(0, |a| a.id);
-        count += 1;
-        write_row(&mut rows, port, name, category, app_id, true);
+        let known = crate::known_ports::lookup(port);
+
+        if let Some(a) = app {
+            count += 1;
+            write_row(&mut rows, port, &a.name, &a.category, a.id, true);
+        } else if let Some(k) = known {
+            macos_count += 1;
+            write_row(&mut macos_rows, port, k.name, "macos", 0, true);
+        } else {
+            count += 1;
+            write_row(&mut rows, port, "", "", 0, true);
+        }
     }
 
+    // Registered but down apps
     for app in apps {
         let port = u16::try_from(app.port).unwrap_or(0);
         if alive_ports.contains(&port) {
@@ -109,12 +122,16 @@ fn build_rows(alive_ports: &[u16], apps: &[App]) -> (usize, String) {
         write_row(&mut rows, port, &app.name, &app.category, app.id, false);
     }
 
+    // macOS system ports at the bottom
+    count += macos_count;
+    rows.push_str(&macos_rows);
+
     (count, rows)
 }
 
 fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i64, alive: bool) {
     let display_name = if name.is_empty() {
-        format!(r#"<span class="unnamed">:{port}</span>"#)
+        format!(r#"<span class="unnamed">{port}</span>"#)
     } else {
         name.to_string()
     };
@@ -145,7 +162,7 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
             <span class="c-badge-text">{badge}</span>
             <input class="inline-input cat-inline" data-field="category" value="{category}" placeholder="tag" style="display:none" />
           </td>
-          <td class="c-port">:{port}</td>
+          <td class="c-port">{port}</td>
           <td class="c-del">{edit_btn}{delete_btn}</td>
         </tr>"#,
     );
@@ -170,8 +187,8 @@ const CSS: &str = r"
     justify-content: center;
     padding: 2rem 1rem;
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 80, 255, 0.08), transparent),
-      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(34, 197, 94, 0.04), transparent);
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(120, 80, 255, 0.15), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(34, 197, 94, 0.08), transparent);
   }
 
   .noise-svg {
@@ -188,7 +205,7 @@ const CSS: &str = r"
 
   .shell {
     width: 100%;
-    max-width: 640px;
+    max-width: 720px;
   }
 
   nav {
@@ -211,7 +228,7 @@ const CSS: &str = r"
   }
 
   h1 {
-    font-size: 0.8rem;
+    font-size: 0.9rem;
     font-weight: 600;
     color: #999;
     letter-spacing: -0.01em;
@@ -263,8 +280,9 @@ const CSS: &str = r"
     background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 10px;
-    overflow: hidden;
+    overflow: auto;
     backdrop-filter: blur(8px);
+    max-height: 75vh;
   }
 
   table { width: 100%; border-collapse: collapse; }
@@ -290,11 +308,16 @@ const CSS: &str = r"
   }
 
   td {
-    padding: 0.5rem 0.6rem;
+    padding: 0.65rem 0.75rem;
     vertical-align: middle;
   }
 
-  .c-status { width: 28px; text-align: center; padding-left: 0.75rem; }
+  .c-status {
+    width: 28px;
+    padding-left: 0.75rem;
+    vertical-align: middle;
+    line-height: 0;
+  }
 
   .dot {
     display: inline-block;
@@ -313,7 +336,7 @@ const CSS: &str = r"
   }
 
   .c-name {
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     font-weight: 500;
     color: #ccc;
   }
@@ -327,7 +350,7 @@ const CSS: &str = r"
 
   .badge {
     display: inline-block;
-    font-size: 0.6rem;
+    font-size: 0.65rem;
     font-weight: 500;
     padding: 0.1rem 0.45rem;
     border-radius: 4px;
@@ -353,6 +376,12 @@ const CSS: &str = r"
     border: 1px solid rgba(168, 85, 247, 0.1);
   }
 
+  .badge-macos {
+    background: rgba(148, 148, 148, 0.08);
+    color: rgba(148, 148, 148, 0.6);
+    border: 1px solid rgba(148, 148, 148, 0.1);
+  }
+
   .cat-inline {
     width: 80px;
   }
@@ -365,8 +394,8 @@ const CSS: &str = r"
 
   .c-port {
     text-align: right;
-    font-size: 0.7rem;
-    color: #333;
+    font-size: 0.8rem;
+    color: #555;
     font-variant-numeric: tabular-nums;
     padding-right: 0.4rem;
   }
@@ -376,6 +405,8 @@ const CSS: &str = r"
     text-align: center;
     padding-right: 0.6rem;
     white-space: nowrap;
+    vertical-align: middle;
+    line-height: 0;
   }
 
   .c-del .edit-btn + .del { margin-left: 4px; }
@@ -439,7 +470,7 @@ const CSS: &str = r"
 
   .filter {
     font-family: inherit;
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     font-weight: 500;
     padding: 0.2rem 0.6rem;
     border-radius: 5px;
