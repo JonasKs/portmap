@@ -134,7 +134,7 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
     let _ = write!(
         rows,
         r#"
-        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}"
+        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{category}"
             onclick="go({port})" oncontextmenu="inlineEdit(event, this)">
           <td class="c-status"><span class="dot {status}"></span></td>
           <td class="c-name">
@@ -390,8 +390,8 @@ const CSS: &str = r"
     transition: color 0.1s;
     vertical-align: middle;
   }
-  .row:hover .edit-btn { color: #2a2a2a; }
-  .edit-btn:hover { color: #888 !important; }
+  .row:hover .edit-btn { color: #666; }
+  .edit-btn:hover { color: #ccc !important; }
 
   .del {
     background: none;
@@ -405,7 +405,7 @@ const CSS: &str = r"
     vertical-align: middle;
   }
 
-  .row:hover .del { color: #2a2a2a; }
+  .row:hover .del { color: #666; }
   .del:hover { color: #ef4444 !important; }
 
   .links {
@@ -516,6 +516,9 @@ function inlineEdit(e, row) {
   editingRow = row;
   row.classList.add('editing');
   const nameInput = row.querySelector('[data-field="name"]');
+  const catInput = row.querySelector('[data-field="category"]');
+  nameInput.value = row.dataset.name || '';
+  catInput.value = row.dataset.category || '';
   nameInput.focus();
   nameInput.select();
 }
