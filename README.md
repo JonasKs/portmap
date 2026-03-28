@@ -21,15 +21,27 @@ brew install portmap
 cargo install --path .
 ```
 
-## Usage
+## Quick start
 
 ```bash
-portmap                    # start on port 1337
-portmap --port 8080        # custom port
-portmap --scan-start 3000 --scan-end 9000  # custom scan range
+portmap install        # register as startup service + start now
 ```
 
-Then visit [localhost:1337](http://localhost:1337).
+Dashboard at [localhost:1337](http://localhost:1337). That's it.
+
+## CLI
+
+```bash
+portmap install                        # start on login (launchd/systemd)
+portmap uninstall                      # stop service, remove db + binary
+portmap status                         # check if running
+portmap serve                          # run in foreground (default)
+portmap list                           # show registered apps
+portmap scan                           # discover open ports
+portmap add "my-app" -P 3000 -c frontend
+portmap remove 3000                    # remove by port or ID
+portmap update 1 --name "new-name"
+```
 
 ## Features
 
@@ -41,74 +53,7 @@ Then visit [localhost:1337](http://localhost:1337).
 - **JSON API** — CRUD for registered apps at `/api/apps`
 - **SQLite persistence** — survives restarts, stored at `~/.portmap.db`
 - **Tiny binary** — single static binary, no runtime dependencies
-
-## API
-
-```bash
-# List all open ports with app info
-curl localhost:1337/api/ports
-
-# List registered apps
-curl localhost:1337/api/apps
-
-# Register an app
-curl -X POST localhost:1337/api/apps \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-app", "port": 3000, "category": "frontend"}'
-
-# Bulk register
-curl -X POST localhost:1337/api/apps/bulk \
-  -H "Content-Type: application/json" \
-  -d '[{"name": "api", "port": 8080, "category": "backend"}]'
-
-# Update
-curl -X PUT localhost:1337/api/apps/1 \
-  -H "Content-Type: application/json" \
-  -d '{"name": "new-name"}'
-
-# Delete
-curl -X DELETE localhost:1337/api/apps/1
-
-# Markdown (for agents)
-curl -H "Accept: text/markdown" localhost:1337/
-```
-
-## Run on startup
-
-### macOS (launchd)
-
-```bash
-just install-service    # install binary + register launch agent
-just uninstall-service  # stop + remove
-just status             # check if running
-just logs               # tail logs
-```
-
-### Linux (systemd)
-
-```bash
-# Create a user service
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/portmap.service << EOF
-[Unit]
-Description=portmap
-
-[Service]
-ExecStart=%h/.cargo/bin/portmap --port 1337
-Restart=always
-
-[Install]
-WantedBy=default.target
-EOF
-
-systemctl --user enable --now portmap
-```
-
-### Full uninstall
-
-```bash
-portmap --uninstall   # removes agent, database, and binary
-```
+- **Startup service** — `portmap install` registers launchd (macOS) or systemd (Linux)
 
 ## License
 
