@@ -1,0 +1,26 @@
+[advisories]
+ignore = []
+version = 2
+yanked = "warn"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+
+[licenses]
+allow = [
+  "Unicode-3.0",
+  "MIT",
+  "Apache-2.0",
+  "ISC",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "Zlib",
+  "CDLA-Permissive-2.0",
+  "OpenSSL",
+]
+confidence-threshold = 0.93
+version = 2
+
+[licenses.private]
+ignore = true

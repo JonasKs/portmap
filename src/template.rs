@@ -19,7 +19,25 @@ pub fn render(
         format!("<table>{}</table>", rows.1)
     };
 
-    let filter_btns = r#"<button class="filter active" onclick="filterBy('all', this)">all</button><button class="filter" onclick="filterBy('frontend', this)">frontend</button><button class="filter" onclick="filterBy('backend', this)">backend</button><button class="filter" onclick="filterBy('mcp', this)">mcp</button>"#;
+    // Collect unique categories from apps for dynamic filter buttons
+    let mut categories: Vec<&str> = apps
+        .iter()
+        .map(|a| a.category.as_str())
+        .filter(|c| !c.is_empty() && *c != "other")
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    categories.sort_unstable();
+
+    let mut filter_btns = String::from(
+        r#"<button class="filter active" onclick="filterBy('all', this)">all</button>"#,
+    );
+    for cat in &categories {
+        let _ = write!(
+            filter_btns,
+            r#"<button class="filter" onclick="filterBy('{cat}', this)">{cat}</button>"#,
+        );
+    }
 
     format!(
         r#"<!DOCTYPE html>
@@ -106,6 +124,13 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
 
     let name_val = if name.is_empty() { "" } else { name };
 
+    let edit_btn = r#"<button class="edit-btn" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))" title="Edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>"#;
+    let delete_btn = if app_id > 0 {
+        format!(r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})">&times;</button>"#)
+    } else {
+        String::new()
+    };
+
     let _ = write!(
         rows,
         r#"
@@ -118,21 +143,11 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
           </td>
           <td class="c-badge">
             <span class="c-badge-text">{badge}</span>
-            <span class="tag-picker" style="display:none">
-              <button type="button" class="tag-opt badge badge-frontend" onclick="pickTag(this,'frontend')">frontend</button>
-              <button type="button" class="tag-opt badge badge-backend" onclick="pickTag(this,'backend')">backend</button>
-              <button type="button" class="tag-opt badge badge-mcp" onclick="pickTag(this,'mcp')">mcp</button>
-            </span>
-            <input type="hidden" data-field="category" value="{category}" />
+            <input class="inline-input cat-inline" data-field="category" value="{category}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">:{port}</td>
-          <td class="c-del">{delete_btn}</td>
+          <td class="c-del">{edit_btn}{delete_btn}</td>
         </tr>"#,
-        delete_btn = if app_id > 0 {
-            format!(r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})">&times;</button>"#)
-        } else {
-            String::new()
-        },
     );
 }
 
@@ -338,20 +353,14 @@ const CSS: &str = r"
     border: 1px solid rgba(168, 85, 247, 0.1);
   }
 
-  .tag-picker {
-    display: inline-flex;
-    gap: 0.25rem;
+  .cat-inline {
+    width: 80px;
   }
 
-  .tag-opt {
-    cursor: pointer;
-    font-family: inherit;
-    opacity: 0.5;
-    transition: opacity 0.1s;
-  }
-
-  .tag-opt:hover, .tag-opt.selected {
-    opacity: 1;
+  .badge-other, .badge:not(.badge-frontend):not(.badge-backend):not(.badge-mcp) {
+    background: rgba(200, 200, 200, 0.08);
+    color: rgba(200, 200, 200, 0.7);
+    border: 1px solid rgba(200, 200, 200, 0.1);
   }
 
   .c-port {
@@ -363,10 +372,26 @@ const CSS: &str = r"
   }
 
   .c-del {
-    width: 24px;
+    width: 50px;
     text-align: center;
     padding-right: 0.6rem;
+    white-space: nowrap;
   }
+
+  .c-del .edit-btn + .del { margin-left: 4px; }
+
+  .edit-btn {
+    background: none;
+    border: none;
+    color: transparent;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.1s;
+    vertical-align: middle;
+  }
+  .row:hover .edit-btn { color: #2a2a2a; }
+  .edit-btn:hover { color: #888 !important; }
 
   .del {
     background: none;
@@ -377,6 +402,7 @@ const CSS: &str = r"
     padding: 0;
     line-height: 1;
     transition: color 0.1s;
+    vertical-align: middle;
   }
 
   .row:hover .del { color: #2a2a2a; }
@@ -454,8 +480,6 @@ const CSS: &str = r"
 
   .row.editing .inline-input { display: inline-block !important; }
 
-  .row.editing .tag-picker { display: inline-flex !important; }
-
   .inline-input {
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.1);
@@ -491,10 +515,6 @@ function inlineEdit(e, row) {
 
   editingRow = row;
   row.classList.add('editing');
-  const curCat = row.querySelector('[data-field="category"]').value;
-  row.querySelectorAll('.tag-opt').forEach(b => {
-    b.classList.toggle('selected', b.textContent.trim() === curCat);
-  });
   const nameInput = row.querySelector('[data-field="name"]');
   nameInput.focus();
   nameInput.select();
@@ -527,14 +547,6 @@ async function saveEdit(row) {
   }
 
   location.reload();
-}
-
-function pickTag(btn, cat) {
-  event.stopPropagation();
-  const row = btn.closest('.row');
-  row.querySelector('[data-field="category"]').value = cat;
-  row.querySelectorAll('.tag-opt').forEach(b => b.classList.remove('selected'));
-  btn.classList.add('selected');
 }
 
 function filterBy(cat, btn) {

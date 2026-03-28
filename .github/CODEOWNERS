@@ -1,0 +1,8 @@
+# Root
+/*.* @jonasKs
+
+# GitHub
+/.github/ @jonasKs
+
+/.github/CODEOWNERS
+/Cargo.lock

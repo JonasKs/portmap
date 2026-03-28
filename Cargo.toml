@@ -2,6 +2,7 @@
 name = "portmap"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 axum = "0.8"
@@ -14,6 +15,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
 [lints.rust]
 unsafe_code = "forbid"
 
@@ -22,6 +26,7 @@ pedantic = { level = "deny", priority = -1 }
 similar_names = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+must_use_candidate = "allow"
 
 [profile.release]
 strip = true
