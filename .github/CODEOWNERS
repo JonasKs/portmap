@@ -1,8 +1,8 @@
 # Root
-/*.* @jonasKs
+/*.* @jonasks
 
 # GitHub
-/.github/ @jonasKs
+/.github/ @jonasks
 
 /.github/CODEOWNERS
 /Cargo.lock

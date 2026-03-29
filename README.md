@@ -11,7 +11,7 @@ A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/
 ### Homebrew (macOS & Linux)
 
 ```bash
-brew tap jonasKs/portmap
+brew tap jonasks/portmap
 brew install portmap
 ```
 

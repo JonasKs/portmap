@@ -1,3 +1,5 @@
+name: Release
+
 on:
   push:
     branches:
@@ -6,8 +8,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-
-name: release-please
 
 jobs:
   release-please:
@@ -25,4 +25,157 @@ jobs:
   build:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
-    uses: ./.github/workflows/release.yaml
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: portmap-x86_64-apple-darwin
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: portmap-aarch64-apple-darwin
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: portmap-x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: portmap-aarch64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - uses: swatinem/rust-cache@v2
+
+      - run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../${{ matrix.name }}.tar.gz portmap
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  upload:
+    needs: [release-please, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create checksums
+        run: sha256sum portmap-*.tar.gz > checksums.txt
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ needs.release-please.outputs.tag_name }} portmap-*.tar.gz checksums.txt --repo ${{ github.repository }}
+
+  update-homebrew:
+    needs: [release-please, upload]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download ${{ needs.release-please.outputs.tag_name }} --pattern checksums.txt --repo ${{ github.repository }}
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: jonasks/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update formula
+        run: |
+          VERSION="${{ needs.release-please.outputs.tag_name }}"
+          VERSION="${VERSION#v}"
+
+          SHA_AARCH64_DARWIN=$(grep aarch64-apple-darwin checksums.txt | awk '{print $1}')
+          SHA_X86_64_DARWIN=$(grep x86_64-apple-darwin checksums.txt | awk '{print $1}')
+          SHA_AARCH64_LINUX=$(grep aarch64-unknown-linux checksums.txt | awk '{print $1}')
+          SHA_X86_64_LINUX=$(grep x86_64-unknown-linux checksums.txt | awk '{print $1}')
+
+          cat > Formula/portmap.rb << FORMULA
+          class Portmap < Formula
+            desc "Map names to localhost ports. Made for agents and humans."
+            homepage "https://github.com/jonasks/portmap"
+            version "$VERSION"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-aarch64-apple-darwin.tar.gz"
+                sha256 "$SHA_AARCH64_DARWIN"
+              end
+
+              on_intel do
+                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-x86_64-apple-darwin.tar.gz"
+                sha256 "$SHA_X86_64_DARWIN"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "$SHA_AARCH64_LINUX"
+              end
+
+              on_intel do
+                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "$SHA_X86_64_LINUX"
+              end
+            end
+
+            def install
+              bin.install "portmap"
+            end
+
+            service do
+              run [opt_bin/"portmap", "serve", "--listen", "1337"]
+              keep_alive true
+              log_path var/"log/portmap.log"
+              error_log_path var/"log/portmap.log"
+            end
+
+            test do
+              assert_match "portmap", shell_output("#{bin}/portmap --help")
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' Formula/portmap.rb
+
+      - name: Create PR in tap repo
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          BRANCH="portmap-${{ needs.release-please.outputs.tag_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add Formula/portmap.rb
+          git commit -m "feat: update portmap to ${{ needs.release-please.outputs.tag_name }}"
+          git push origin "$BRANCH"
+          gh pr create --repo jonasks/homebrew-tap \
+            --title "Update portmap to ${{ needs.release-please.outputs.tag_name }}" \
+            --body "Automated formula update from [portmap release](https://github.com/jonasks/portmap/releases/tag/${{ needs.release-please.outputs.tag_name }})." \
+            --head "$BRANCH"
