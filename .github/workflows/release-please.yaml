@@ -95,7 +95,7 @@ jobs:
       - name: Download checksums
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download ${{ needs.release-please.outputs.tag_name }} --pattern checksums.txt --repo ${{ github.repository }}
+        run: gh release download ${{ needs.release-please.outputs.tag_name }} --pattern checksums.txt --repo ${{ github.repository }} --dir /tmp
 
       - name: Checkout tap repo
         uses: actions/checkout@v4
@@ -104,14 +104,15 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update formula
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          VERSION="${{ needs.release-please.outputs.tag_name }}"
-          VERSION="${VERSION#v}"
+          VERSION="${TAG#portmap-v}"
 
-          SHA_AARCH64_DARWIN=$(grep aarch64-apple-darwin checksums.txt | awk '{print $1}')
-          SHA_X86_64_DARWIN=$(grep x86_64-apple-darwin checksums.txt | awk '{print $1}')
-          SHA_AARCH64_LINUX=$(grep aarch64-unknown-linux checksums.txt | awk '{print $1}')
-          SHA_X86_64_LINUX=$(grep x86_64-unknown-linux checksums.txt | awk '{print $1}')
+          SHA_AARCH64_DARWIN=$(grep aarch64-apple-darwin /tmp/checksums.txt | awk '{print $1}')
+          SHA_X86_64_DARWIN=$(grep x86_64-apple-darwin /tmp/checksums.txt | awk '{print $1}')
+          SHA_AARCH64_LINUX=$(grep aarch64-unknown-linux /tmp/checksums.txt | awk '{print $1}')
+          SHA_X86_64_LINUX=$(grep x86_64-unknown-linux /tmp/checksums.txt | awk '{print $1}')
 
           cat > Formula/portmap.rb << FORMULA
           class Portmap < Formula
@@ -122,24 +123,24 @@ jobs:
 
             on_macos do
               on_arm do
-                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/jonasks/portmap/releases/download/$TAG/portmap-aarch64-apple-darwin.tar.gz"
                 sha256 "$SHA_AARCH64_DARWIN"
               end
 
               on_intel do
-                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/jonasks/portmap/releases/download/$TAG/portmap-x86_64-apple-darwin.tar.gz"
                 sha256 "$SHA_X86_64_DARWIN"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/jonasks/portmap/releases/download/$TAG/portmap-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "$SHA_AARCH64_LINUX"
               end
 
               on_intel do
-                url "https://github.com/jonasks/portmap/releases/download/v#{version}/portmap-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/jonasks/portmap/releases/download/$TAG/portmap-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "$SHA_X86_64_LINUX"
               end
             end
@@ -161,7 +162,6 @@ jobs:
           end
           FORMULA
 
-          # Remove leading whitespace from heredoc
           sed -i 's/^          //' Formula/portmap.rb
 
       - name: Create PR in tap repo
