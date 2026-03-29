@@ -26,10 +26,10 @@ Add the new service and its port to your project's documentation so other develo
 ## 3. Register in portmap (if available)
 
 ```bash
-portmap add "<service-name>" -P <port> -c <category>
+portmap add --name "<service-name>" -P <port> -c <category>
 ```
 
-Where `<category>` describes the service type (e.g. `frontend`, `backend`, `mcp`, `database`).
+Where `<category>` describes the service type (e.g. `frontend`, `backend`, `mcp`, `database`). The `--name` flag is optional — you can tag a port with just a category.
 
 If portmap is not running, skip silently.
 
@@ -37,5 +37,5 @@ If portmap is not running, skip silently.
 
 ```bash
 portmap remove <old-port>
-portmap add "<new-name>" -P <new-port> -c <category>
+portmap add --name "<new-name>" -P <new-port> -c <category>
 ```

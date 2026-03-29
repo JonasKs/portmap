@@ -22,6 +22,14 @@ cargo install --path .
 
 ## Quick start
 
+### Homebrew
+
+```bash
+brew services start jonasks/tap/portmap
+```
+
+### From source
+
 ```bash
 portmap install        # register as startup service + start now
 ```
@@ -31,26 +39,33 @@ Dashboard at [localhost:1337](http://localhost:1337). That's it.
 ## CLI
 
 ```bash
-portmap install                        # start on login (launchd/systemd)
-portmap uninstall                      # stop service, remove db + binary
-portmap status                         # check if running
 portmap serve                          # run in foreground (default)
+portmap install                        # start on login (launchd/systemd)
+portmap uninstall                      # stop service + remove db
+portmap status                         # check if running
 portmap list                           # show registered apps
 portmap scan                           # discover open ports
-portmap add "my-app" -P 3000 -c frontend
+portmap add --name "my-app" -P 3000 -c frontend
+portmap add -P 8080 -c backend         # tag a port without naming it
 portmap remove 3000                    # remove by port or ID
 portmap update 1 --name "new-name"
+portmap --version
 ```
+
+> **Homebrew users:** use `brew services start/stop portmap` instead of `portmap install/uninstall`.
 
 ## Features
 
 - **Port scanning** — discovers all active localhost services
-- **Name & tag ports** — click to navigate, right-click (or pencil icon) to edit
+- **Name & tag ports** — click to navigate, right-click (or pencil icon) to edit inline
+- **Optional names** — tag a port with just a category, name is not required
 - **Category badges** — tag services as frontend, backend, mcp, or anything
+- **Custom tag colors** — right-click filter buttons to pick a color per category
 - **Filter by tag** — quickly filter the dashboard
 - **Agent-friendly** — `Accept: text/markdown` or `/markdown` returns clean markdown with full API docs
-- **JSON API** — CRUD for registered apps at `/api/apps`
+- **JSON API** — CRUD for registered apps at `/api/apps`, tag colors at `/api/tag-colors`
 - **SQLite persistence** — survives restarts, stored at `~/.portmap.db`
+- **Auto-migration** — DB schema upgrades automatically on new versions
 - **Tiny binary** — single static binary, no runtime dependencies
 - **Startup service** — `portmap install` registers launchd (macOS) or systemd (Linux)
 

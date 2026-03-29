@@ -12,4 +12,4 @@ Start by fetching the markdown endpoint which has everything you need:
 
 That returns a full overview of registered apps, their status, and the complete API reference with examples. You can also use the CLI: `portmap --help`.
 
-If portmap isn't running, start it with: `portmap --port 1337 &`, or install it with `portmap install`
+If portmap isn't running, start it with: `portmap serve --listen 1337 &`, or install it with `portmap install`

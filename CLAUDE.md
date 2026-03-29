@@ -18,7 +18,7 @@ Single-binary Rust/Axum web server with embedded SQLite (sqlx).
 
 - `src/lib.rs` — router, handlers, markdown renderer
 - `src/main.rs` — CLI (clap), server startup, uninstall
-- `src/db.rs` — SQLite queries (apps CRUD)
+- `src/db.rs` — SQLite queries (apps CRUD, tag colors)
 - `src/scanner.rs` — async TCP port scanner
 - `src/template.rs` — HTML dashboard template
 - `migrations/` — SQLite migrations
