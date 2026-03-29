@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/JonasKs/portmap/compare/portmap-v0.3.1...portmap-v0.3.2) (2026-03-29)
+
+
+### Bug Fixes
+
+* detect brew install and redirect to brew services ([636b185](https://github.com/JonasKs/portmap/commit/636b18584543d976638b605be8ff8c73ed1b3ecc))
+
 ## [0.3.1](https://github.com/JonasKs/portmap/compare/portmap-v0.3.0...portmap-v0.3.1) (2026-03-29)
 
 
