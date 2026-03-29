@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/JonasKs/portmap/compare/portmap-v0.2.1...portmap-v0.3.0) (2026-03-29)
+
+
+### Features
+
+* optional app names, custom tag colors, and XSS hardening ([bfa8304](https://github.com/JonasKs/portmap/commit/bfa8304a21ff5cc7845c27abcf9c9bd8b64656fa))
+
 ## [0.2.1](https://github.com/JonasKs/portmap/compare/portmap-v0.2.0...portmap-v0.2.1) (2026-03-29)
 
 
