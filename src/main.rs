@@ -3,7 +3,10 @@ use portmap::AppState;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "portmap", about = "Map names to localhost ports. Made for agents and humans.")]
+#[command(
+    name = "portmap",
+    about = "Map names to localhost ports. Made for agents and humans."
+)]
 struct Cli {
     /// Database file path
     #[arg(short, long, default_value = "~/.portmap.db", global = true)]
@@ -167,7 +170,10 @@ async fn cmd_list(db_path: &str) {
 
     println!("{:<6} {:<20} {:<8} CATEGORY", "ID", "NAME", "PORT");
     for app in &apps {
-        println!("{:<6} {:<20} {:<8} {}", app.id, app.name, app.port, app.category);
+        println!(
+            "{:<6} {:<20} {:<8} {}",
+            app.id, app.name, app.port, app.category
+        );
     }
 }
 
@@ -194,7 +200,10 @@ async fn cmd_add(db_path: &str, name: &str, port: i64, category: &str) {
     };
 
     match portmap::db::create_app(&db, &app).await {
-        Ok(created) => println!("Added #{}: {} on :{} [{}]", created.id, created.name, created.port, created.category),
+        Ok(created) => println!(
+            "Added #{}: {} on :{} [{}]",
+            created.id, created.name, created.port, created.category
+        ),
         Err(_) => eprintln!("Failed — port {port} may already be registered"),
     }
 }
@@ -224,7 +233,13 @@ async fn cmd_remove(db_path: &str, target: &str) {
     eprintln!("No app found with ID or port: {target}");
 }
 
-async fn cmd_update(db_path: &str, id: i64, name: Option<String>, port: Option<i64>, category: Option<String>) {
+async fn cmd_update(
+    db_path: &str,
+    id: i64,
+    name: Option<String>,
+    port: Option<i64>,
+    category: Option<String>,
+) {
     let db = portmap::db::init(db_path)
         .await
         .expect("Failed to open database");
@@ -236,7 +251,10 @@ async fn cmd_update(db_path: &str, id: i64, name: Option<String>, port: Option<i
     };
 
     match portmap::db::update_app(&db, id, &update).await {
-        Ok(Some(app)) => println!("Updated #{}: {} on :{} [{}]", app.id, app.name, app.port, app.category),
+        Ok(Some(app)) => println!(
+            "Updated #{}: {} on :{} [{}]",
+            app.id, app.name, app.port, app.category
+        ),
         Ok(None) => eprintln!("No app found with ID {id}"),
         Err(e) => eprintln!("Failed: {e}"),
     }
@@ -384,9 +402,7 @@ fn cmd_status() {
     if cfg!(target_os = "macos") {
         let uid = get_uid();
         let target = format!("gui/{uid}/dev.portmap");
-        let status = Cmd::new("launchctl")
-            .args(["print", &target])
-            .status();
+        let status = Cmd::new("launchctl").args(["print", &target]).status();
         if !status.is_ok_and(|s| s.success()) {
             println!("Not running.");
         }

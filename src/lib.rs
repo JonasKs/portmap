@@ -283,8 +283,7 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
             "\n## Other Open Ports\n\n| Port | Name | URL |\n|------|------|-----|"
         );
         for port in &unregistered {
-            let name = known_ports::lookup(*port)
-                .map_or("—", |k| k.name);
+            let name = known_ports::lookup(*port).map_or("—", |k| k.name);
             let _ = writeln!(md, "| {port} | {name} | http://localhost:{port} |");
         }
     }

@@ -32,9 +32,11 @@ pub async fn init(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
 }
 
 pub async fn list_apps(pool: &SqlitePool) -> Result<Vec<App>, sqlx::Error> {
-    sqlx::query_as::<_, App>("SELECT id, name, port, category, created_at FROM apps ORDER BY category, name")
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, App>(
+        "SELECT id, name, port, category, created_at FROM apps ORDER BY category, name",
+    )
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn get_app(pool: &SqlitePool, id: i64) -> Result<Option<App>, sqlx::Error> {
@@ -56,7 +58,11 @@ pub async fn create_app(pool: &SqlitePool, app: &CreateApp) -> Result<App, sqlx:
     .await
 }
 
-pub async fn update_app(pool: &SqlitePool, id: i64, update: &UpdateApp) -> Result<Option<App>, sqlx::Error> {
+pub async fn update_app(
+    pool: &SqlitePool,
+    id: i64,
+    update: &UpdateApp,
+) -> Result<Option<App>, sqlx::Error> {
     let existing = get_app(pool, id).await?;
     let Some(existing) = existing else {
         return Ok(None);

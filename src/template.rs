@@ -143,7 +143,9 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
 
     let edit_btn = r#"<button class="edit-btn" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))" title="Edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>"#;
     let delete_btn = if app_id > 0 {
-        format!(r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})">&times;</button>"#)
+        format!(
+            r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})">&times;</button>"#
+        )
     } else {
         String::new()
     };

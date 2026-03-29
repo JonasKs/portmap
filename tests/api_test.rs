@@ -1,7 +1,7 @@
-use axum::http::StatusCode;
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
+use axum::http::StatusCode;
 use tower::ServiceExt;
 
 async fn setup_app() -> Router {
@@ -278,7 +278,12 @@ async fn test_markdown_endpoint() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/markdown"));
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
@@ -304,7 +309,12 @@ async fn test_content_negotiation_markdown() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/markdown"));
     let vary = resp.headers().get("vary").unwrap().to_str().unwrap();
     assert!(vary.contains("Accept"));
