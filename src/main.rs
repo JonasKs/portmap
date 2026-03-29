@@ -41,8 +41,9 @@ enum Command {
 
     /// Add an app
     Add {
-        /// App name
-        name: String,
+        /// App name (optional — can tag a port without naming it)
+        #[arg(short, long)]
+        name: Option<String>,
 
         /// Port number
         #[arg(short = 'P', long)]
@@ -116,7 +117,7 @@ async fn main() {
             name,
             port,
             category,
-        }) => cmd_add(&db_path, &name, port, &category).await,
+        }) => cmd_add(&db_path, name.as_deref(), port, &category).await,
         Some(Command::Remove { target }) => cmd_remove(&db_path, &target).await,
         Some(Command::Update {
             id,
@@ -188,22 +189,29 @@ async fn cmd_scan(dashboard_port: u16) {
     }
 }
 
-async fn cmd_add(db_path: &str, name: &str, port: i64, category: &str) {
+async fn cmd_add(db_path: &str, name: Option<&str>, port: i64, category: &str) {
     let db = portmap::db::init(db_path)
         .await
         .expect("Failed to open database");
 
     let app = portmap::db::CreateApp {
-        name: name.to_string(),
+        name: name.map(String::from),
         port,
         category: Some(category.to_string()),
     };
 
     match portmap::db::create_app(&db, &app).await {
-        Ok(created) => println!(
-            "Added #{}: {} on :{} [{}]",
-            created.id, created.name, created.port, created.category
-        ),
+        Ok(created) => {
+            let display = if created.name.is_empty() {
+                format!(":{}", created.port)
+            } else {
+                created.name.clone()
+            };
+            println!(
+                "Added #{}: {} on :{} [{}]",
+                created.id, display, created.port, created.category
+            );
+        }
         Err(_) => eprintln!("Failed — port {port} may already be registered"),
     }
 }

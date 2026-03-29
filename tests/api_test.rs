@@ -321,6 +321,129 @@ async fn test_content_negotiation_markdown() {
 }
 
 #[tokio::test]
+async fn test_create_app_without_name() {
+    let app = setup_app().await;
+
+    // Create with only port and category (no name)
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/apps")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"port":7777,"category":"backend"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(created["name"], "");
+    assert_eq!(created["port"], 7777);
+    assert_eq!(created["category"], "backend");
+}
+
+#[tokio::test]
+async fn test_tag_color_crud() {
+    let app = setup_app().await;
+
+    // Set a tag color
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/tag-colors/frontend")
+                .header("content-type", "application/json")
+                .body(Body::from(r##"{"color":"#ef4444"}"##))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let tc: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(tc["category"], "frontend");
+    assert_eq!(tc["color"], "#ef4444");
+
+    // List tag colors
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/tag-colors")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let colors: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(colors.len(), 1);
+    assert_eq!(colors[0]["color"], "#ef4444");
+
+    // Update the color
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/tag-colors/frontend")
+                .header("content-type", "application/json")
+                .body(Body::from(r##"{"color":"#22c55e"}"##))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let tc: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(tc["color"], "#22c55e");
+
+    // Delete the color
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/tag-colors/frontend")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Verify gone
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/tag-colors")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let colors: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(colors.is_empty());
+}
+
+#[tokio::test]
 async fn test_content_negotiation_html() {
     let app = setup_app().await;
 

@@ -14,7 +14,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tower_http::cors::CorsLayer;
 
-use crate::db::{App, CreateApp, UpdateApp};
+use crate::db::{App, CreateApp, SetTagColor, TagColor, UpdateApp};
 use crate::scanner::scan_ports;
 
 #[derive(Clone)]
@@ -44,6 +44,14 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/apps/{id}",
             get(get_app).put(update_app).delete(delete_app),
+        )
+        .route(
+            "/api/tag-colors",
+            get(list_tag_colors),
+        )
+        .route(
+            "/api/tag-colors/{category}",
+            axum::routing::put(set_tag_color).delete(delete_tag_color),
         )
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -79,9 +87,14 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
         .map(|&port| {
             let app = apps.iter().find(|a| a.port == i64::from(port));
             if let Some(app) = app {
+                let name = if app.name.is_empty() {
+                    None
+                } else {
+                    Some(app.name.clone())
+                };
                 PortInfo {
                     port,
-                    name: Some(app.name.clone()),
+                    name,
                     category: Some(app.category.clone()),
                     registered: true,
                     alive: true,
@@ -109,9 +122,14 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
     for app in &apps {
         let port = u16::try_from(app.port).unwrap_or(0);
         if !alive.contains(&port) {
+            let name = if app.name.is_empty() {
+                None
+            } else {
+                Some(app.name.clone())
+            };
             ports.push(PortInfo {
                 port,
-                name: Some(app.name.clone()),
+                name,
                 category: Some(app.category.clone()),
                 registered: true,
                 alive: false,
@@ -164,7 +182,7 @@ async fn bulk_create_apps(
             Err(_) => {
                 if let Ok(Some(existing)) = db::find_app_by_port(&state.db, app.port).await {
                     let update = UpdateApp {
-                        name: Some(app.name.clone()),
+                        name: app.name.clone(),
                         port: None,
                         category: app.category.clone(),
                     };
@@ -199,6 +217,39 @@ async fn delete_app(State(state): State<AppState>, Path(id): Path<i64>) -> Statu
     }
 }
 
+// -- Tag colors --
+
+async fn list_tag_colors(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<TagColor>>, StatusCode> {
+    db::list_tag_colors(&state.db)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn set_tag_color(
+    State(state): State<AppState>,
+    Path(category): Path<String>,
+    Json(body): Json<SetTagColor>,
+) -> Result<Json<TagColor>, StatusCode> {
+    db::set_tag_color(&state.db, &category, &body.color)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn delete_tag_color(
+    State(state): State<AppState>,
+    Path(category): Path<String>,
+) -> StatusCode {
+    match db::delete_tag_color(&state.db, &category).await {
+        Ok(true) => StatusCode::NO_CONTENT,
+        Ok(false) => StatusCode::NOT_FOUND,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
 // -- Dashboard --
 
 async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -213,12 +264,14 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
 
     let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
+    let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
     let html = template::render(
         &alive,
         &apps,
         state.scan_start,
         state.scan_end,
         state.dashboard_port,
+        &tag_colors,
     );
     ([(header::VARY, "Accept")], Html(html)).into_response()
 }
@@ -264,10 +317,15 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
             } else {
                 "down"
             };
+            let name = if app.name.is_empty() {
+                format!(":{}", app.port)
+            } else {
+                app.name.clone()
+            };
             let _ = writeln!(
                 md,
                 "| {} | {} | {} | {status} |",
-                app.name, app.port, app.category
+                name, app.port, app.category
             );
         }
     }

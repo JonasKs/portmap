@@ -12,7 +12,7 @@ pub struct App {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateApp {
-    pub name: String,
+    pub name: Option<String>,
     pub port: i64,
     pub category: Option<String>,
 }
@@ -22,6 +22,17 @@ pub struct UpdateApp {
     pub name: Option<String>,
     pub port: Option<i64>,
     pub category: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TagColor {
+    pub category: String,
+    pub color: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetTagColor {
+    pub color: String,
 }
 
 pub async fn init(db_path: &str) -> Result<SqlitePool, sqlx::Error> {
@@ -47,11 +58,12 @@ pub async fn get_app(pool: &SqlitePool, id: i64) -> Result<Option<App>, sqlx::Er
 }
 
 pub async fn create_app(pool: &SqlitePool, app: &CreateApp) -> Result<App, sqlx::Error> {
+    let name = app.name.as_deref().unwrap_or("");
     let category = app.category.as_deref().unwrap_or("other");
     sqlx::query_as::<_, App>(
         "INSERT INTO apps (name, port, category) VALUES (?, ?, ?) RETURNING id, name, port, category, created_at",
     )
-    .bind(&app.name)
+    .bind(name)
     .bind(app.port)
     .bind(category)
     .fetch_one(pool)
@@ -96,4 +108,34 @@ pub async fn find_app_by_port(pool: &SqlitePool, port: i64) -> Result<Option<App
         .bind(port)
         .fetch_optional(pool)
         .await
+}
+
+// -- Tag colors --
+
+pub async fn list_tag_colors(pool: &SqlitePool) -> Result<Vec<TagColor>, sqlx::Error> {
+    sqlx::query_as::<_, TagColor>("SELECT category, color FROM tag_colors ORDER BY category")
+        .fetch_all(pool)
+        .await
+}
+
+pub async fn set_tag_color(
+    pool: &SqlitePool,
+    category: &str,
+    color: &str,
+) -> Result<TagColor, sqlx::Error> {
+    sqlx::query_as::<_, TagColor>(
+        "INSERT INTO tag_colors (category, color) VALUES (?, ?) ON CONFLICT(category) DO UPDATE SET color = excluded.color RETURNING category, color",
+    )
+    .bind(category)
+    .bind(color)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn delete_tag_color(pool: &SqlitePool, category: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM tag_colors WHERE category = ?")
+        .bind(category)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
 }

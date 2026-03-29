@@ -1,13 +1,43 @@
 use std::fmt::Write;
 
-use crate::db::App;
+use crate::db::{App, TagColor};
 
+/// Escape a string for safe inclusion in HTML text and double-quoted attributes.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Parse `#RRGGBB` into `(r, g, b)`. Returns `None` on invalid input.
+fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+#[allow(clippy::too_many_lines)]
 pub fn render(
     alive_ports: &[u16],
     apps: &[App],
     scan_start: u16,
     scan_end: u16,
     dashboard_port: u16,
+    tag_colors: &[TagColor],
 ) -> String {
     let rows = build_rows(alive_ports, apps);
     let total = rows.0;
@@ -23,7 +53,7 @@ pub fn render(
     let mut categories: Vec<&str> = apps
         .iter()
         .map(|a| a.category.as_str())
-        .filter(|c| !c.is_empty() && *c != "other")
+        .filter(|c| !c.is_empty())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -33,10 +63,41 @@ pub fn render(
         r#"<button class="filter active" onclick="filterBy('all', this)">all</button>"#,
     );
     for cat in &categories {
+        let cat_esc = html_escape(cat);
         let _ = write!(
             filter_btns,
-            r#"<button class="filter" onclick="filterBy('{cat}', this)">{cat}</button>"#,
+            r#"<button class="filter" data-category="{cat_esc}" onclick="filterBy('{cat_esc}', this)">{cat_esc}</button>"#,
         );
+    }
+
+    // Generate dynamic CSS for custom tag colors
+    let mut custom_css = String::new();
+    for tc in tag_colors {
+        let css_class: String = tc
+            .category
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        if let Some((r, g, b)) = hex_to_rgb(&tc.color) {
+            let cat_esc = html_escape(&tc.category);
+            let _ = write!(
+                custom_css,
+                r#"
+  .badge.badge-{css_class} {{
+    background: rgba({r}, {g}, {b}, 0.08);
+    color: rgba({r}, {g}, {b}, 0.7);
+    border: 1px solid rgba({r}, {g}, {b}, 0.1);
+  }}
+  .filter[data-category="{cat_esc}"] {{
+    border-color: rgba({r}, {g}, {b}, 0.2);
+  }}
+  .filter[data-category="{cat_esc}"].active {{
+    background: rgba({r}, {g}, {b}, 0.12);
+    color: rgba({r}, {g}, {b}, 0.8);
+    border-color: rgba({r}, {g}, {b}, 0.3);
+  }}"#
+            );
+        }
     }
 
     format!(
@@ -52,6 +113,7 @@ pub fn render(
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
 {CSS}
+{custom_css}
 </style>
 </head>
 <body>
@@ -80,6 +142,10 @@ pub fn render(
       <a href="/markdown">markdown</a>
       <span class="links-port">:{dashboard_port}</span>
     </div>
+  </div>
+  <div id="color-menu" style="display:none">
+    <div class="color-grid"></div>
+    <button class="color-reset">reset</button>
   </div>
 {SCRIPT}
 </body>
@@ -130,16 +196,23 @@ fn build_rows(alive_ports: &[u16], apps: &[App]) -> (usize, String) {
 }
 
 fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i64, alive: bool) {
+    let name_esc = html_escape(name);
+    let cat_esc = html_escape(category);
+
     let display_name = if name.is_empty() {
         format!(r#"<span class="unnamed">{port}</span>"#)
     } else {
-        name.to_string()
+        name_esc.clone()
     };
-    let badge = category_badge(category);
+    let badge = category_badge(&cat_esc);
     let status = if alive { "alive" } else { "down" };
     let row_class = if alive { "row" } else { "row is-down" };
 
-    let name_val = if name.is_empty() { "" } else { name };
+    let name_val = if name.is_empty() {
+        String::new()
+    } else {
+        name_esc.clone()
+    };
 
     let edit_btn = r#"<button class="edit-btn" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))" title="Edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>"#;
     let delete_btn = if app_id > 0 {
@@ -153,7 +226,7 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
     let _ = write!(
         rows,
         r#"
-        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{category}"
+        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{cat_esc}"
             onclick="go({port})" oncontextmenu="inlineEdit(event, this)">
           <td class="c-status"><span class="dot {status}"></span></td>
           <td class="c-name">
@@ -162,7 +235,7 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
           </td>
           <td class="c-badge">
             <span class="c-badge-text">{badge}</span>
-            <input class="inline-input cat-inline" data-field="category" value="{category}" placeholder="tag" style="display:none" />
+            <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
           <td class="c-del">{edit_btn}{delete_btn}</td>
@@ -170,11 +243,17 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
     );
 }
 
+/// Expects a pre-escaped category string for the display text.
+/// The CSS class uses only alphanumeric/hyphen characters.
 fn category_badge(category: &str) -> String {
-    if category.is_empty() || category == "other" {
+    if category.is_empty() {
         return String::new();
     }
-    format!(r#"<span class="badge badge-{category}">{category}</span>"#)
+    let css_class: String = category
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    format!(r#"<span class="badge badge-{css_class}">{category}</span>"#)
 }
 
 const CSS: &str = r"
@@ -358,27 +437,30 @@ const CSS: &str = r"
     border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+    background: rgba(200, 200, 200, 0.08);
+    color: rgba(200, 200, 200, 0.7);
+    border: 1px solid rgba(200, 200, 200, 0.1);
   }
 
-  .badge-frontend {
+  .badge.badge-frontend {
     background: rgba(56, 189, 248, 0.08);
     color: rgba(56, 189, 248, 0.7);
     border: 1px solid rgba(56, 189, 248, 0.1);
   }
 
-  .badge-backend {
+  .badge.badge-backend {
     background: rgba(74, 222, 128, 0.08);
     color: rgba(74, 222, 128, 0.7);
     border: 1px solid rgba(74, 222, 128, 0.1);
   }
 
-  .badge-mcp {
+  .badge.badge-mcp {
     background: rgba(168, 85, 247, 0.08);
     color: rgba(168, 85, 247, 0.7);
     border: 1px solid rgba(168, 85, 247, 0.1);
   }
 
-  .badge-macos {
+  .badge.badge-macos {
     background: rgba(148, 148, 148, 0.08);
     color: rgba(148, 148, 148, 0.6);
     border: 1px solid rgba(148, 148, 148, 0.1);
@@ -386,12 +468,6 @@ const CSS: &str = r"
 
   .cat-inline {
     width: 80px;
-  }
-
-  .badge-other, .badge:not(.badge-frontend):not(.badge-backend):not(.badge-mcp) {
-    background: rgba(200, 200, 200, 0.08);
-    color: rgba(200, 200, 200, 0.7);
-    border: 1px solid rgba(200, 200, 200, 0.1);
   }
 
   .c-port {
@@ -496,6 +572,15 @@ const CSS: &str = r"
     border-color: rgba(255,255,255,0.12);
   }
 
+  .filter[data-category='frontend'] { border-color: rgba(56, 189, 248, 0.2); }
+  .filter[data-category='frontend'].active { background: rgba(56, 189, 248, 0.12); color: rgba(56, 189, 248, 0.8); border-color: rgba(56, 189, 248, 0.3); }
+
+  .filter[data-category='backend'] { border-color: rgba(74, 222, 128, 0.2); }
+  .filter[data-category='backend'].active { background: rgba(74, 222, 128, 0.12); color: rgba(74, 222, 128, 0.8); border-color: rgba(74, 222, 128, 0.3); }
+
+  .filter[data-category='mcp'] { border-color: rgba(168, 85, 247, 0.2); }
+  .filter[data-category='mcp'].active { background: rgba(168, 85, 247, 0.12); color: rgba(168, 85, 247, 0.8); border-color: rgba(168, 85, 247, 0.3); }
+
   .empty {
     text-align: center;
     color: #444;
@@ -528,6 +613,55 @@ const CSS: &str = r"
 
   .inline-input:focus {
     border-color: rgba(255,255,255,0.25);
+  }
+
+  #color-menu {
+    position: fixed;
+    z-index: 100;
+    background: #1a1a1e;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 0.5rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+
+  .color-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+  }
+
+  .color-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.1);
+    cursor: pointer;
+    transition: transform 0.1s, border-color 0.1s;
+  }
+
+  .color-swatch:hover {
+    transform: scale(1.2);
+    border-color: rgba(255,255,255,0.3);
+  }
+
+  .color-reset {
+    width: 100%;
+    margin-top: 4px;
+    background: none;
+    border: 1px solid rgba(255,255,255,0.06);
+    color: #666;
+    font-family: inherit;
+    font-size: 0.6rem;
+    padding: 0.15rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+
+  .color-reset:hover {
+    background: rgba(255,255,255,0.05);
+    color: #999;
   }
 ";
 
@@ -574,11 +708,11 @@ async function saveEdit(row) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name || null, category: category || null })
     });
-  } else if (name) {
+  } else if (name || category) {
     await fetch('/api/apps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, port, category: category || 'other' })
+      body: JSON.stringify({ name: name || null, port, category: category || 'other' })
     });
   }
 
@@ -604,16 +738,87 @@ async function deleteApp(appId) {
   location.reload();
 }
 
+// -- Color picker --
+
+const COLOR_SWATCHES = [
+  '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6',
+  '#38bdf8', '#8b5cf6', '#ec4899', '#6b7280', '#f5f5f4'
+];
+
+let colorMenuTarget = null;
+
+function initColorMenu() {
+  const menu = document.getElementById('color-menu');
+  const grid = menu.querySelector('.color-grid');
+  COLOR_SWATCHES.forEach(hex => {
+    const swatch = document.createElement('div');
+    swatch.className = 'color-swatch';
+    swatch.style.background = hex;
+    swatch.dataset.color = hex;
+    swatch.addEventListener('click', () => setTagColor(hex));
+    grid.appendChild(swatch);
+  });
+  menu.querySelector('.color-reset').addEventListener('click', resetTagColor);
+}
+
+function showColorMenu(e, category) {
+  e.preventDefault();
+  e.stopPropagation();
+  colorMenuTarget = category;
+  const menu = document.getElementById('color-menu');
+  menu.style.display = 'block';
+  const x = Math.min(e.clientX, window.innerWidth - 140);
+  const y = Math.min(e.clientY, window.innerHeight - 160);
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+}
+
+function hideColorMenu() {
+  document.getElementById('color-menu').style.display = 'none';
+  colorMenuTarget = null;
+}
+
+async function setTagColor(hex) {
+  if (!colorMenuTarget) return;
+  await fetch(`/api/tag-colors/${encodeURIComponent(colorMenuTarget)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ color: hex })
+  });
+  hideColorMenu();
+  location.reload();
+}
+
+async function resetTagColor() {
+  if (!colorMenuTarget) return;
+  await fetch(`/api/tag-colors/${encodeURIComponent(colorMenuTarget)}`, {
+    method: 'DELETE'
+  });
+  hideColorMenu();
+  location.reload();
+}
+
 document.addEventListener('keydown', e => {
-  if (!editingRow) return;
-  if (e.key === 'Enter') { e.preventDefault(); saveEdit(editingRow); }
-  if (e.key === 'Escape') cancelEdit();
+  if (!editingRow && !colorMenuTarget) return;
+  if (e.key === 'Enter' && editingRow) { e.preventDefault(); saveEdit(editingRow); }
+  if (e.key === 'Escape') { cancelEdit(); hideColorMenu(); }
 });
 
 document.addEventListener('click', e => {
   if (editingRow && !editingRow.contains(e.target)) cancelEdit();
+  const menu = document.getElementById('color-menu');
+  if (colorMenuTarget && !menu.contains(e.target)) hideColorMenu();
 });
 
+// Right-click on filter buttons to open color picker
+document.addEventListener('contextmenu', e => {
+  const btn = e.target.closest('.filter[data-category]');
+  if (btn) {
+    showColorMenu(e, btn.dataset.category);
+  }
+});
+
+initColorMenu();
 setTimeout(() => location.reload(), 30000);
 </script>
 "#;

@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS tag_colors (
+    category TEXT PRIMARY KEY NOT NULL,
+    color TEXT NOT NULL
+);
