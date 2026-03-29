@@ -12,14 +12,14 @@ A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/
 
 ```bash
 brew install jonasks/tap/portmap
-brew services start portmap
+brew services start portmap          # start now + launch on login
 ```
 
 ### From source
 
 ```bash
 cargo install --path .
-portmap install
+portmap install                      # start now + launch on login
 ```
 
 Dashboard at [localhost:1337](http://localhost:1337). That's it.
