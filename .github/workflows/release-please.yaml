@@ -149,6 +149,10 @@ jobs:
               bin.install "portmap"
             end
 
+            def uninstall_preflight
+              system bin/"portmap", "uninstall"
+            end
+
             service do
               run [opt_bin/"portmap", "serve", "--listen", "1337"]
               keep_alive true

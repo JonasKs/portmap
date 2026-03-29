@@ -5,7 +5,8 @@ use tracing::info;
 #[derive(Parser)]
 #[command(
     name = "portmap",
-    about = "Map names to localhost ports. Made for agents and humans."
+    about = "Map names to localhost ports. Made for agents and humans.",
+    version
 )]
 struct Cli {
     /// Database file path
@@ -392,13 +393,6 @@ fn cmd_uninstall(db_flag: &str) {
     let db_path = shellexpand(db_flag);
     if std::fs::remove_file(&db_path).is_ok() {
         println!("Removed database.");
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        let path = exe.display().to_string();
-        if std::fs::remove_file(&exe).is_ok() {
-            println!("Removed binary ({path}).");
-        }
     }
 
     println!("portmap has been uninstalled.");
