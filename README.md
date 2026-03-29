@@ -2,7 +2,7 @@
 
 > Map names to localhost ports. Made for agents and humans.
 
-A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/portless) — discover and manage what's running on your machine. Unlike Portless, portmap doesn't hijack your localhost with subdomain routing or break OAuth flows. It simply scans your ports, lets you name them, and gives you a clean dashboard + API.
+A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/portless) — discover and manage what's running on your machine. Unlike Portless, portmap doesn't hijack your localhost with subdomain routing or break OAuth flows. It simply scans your ports, lets you name them, and gives you a clean dashboard + API. Agents can use the CLI, or `curl -H "Accept: text/markdown" http://localhost:1337` to get all the information and instructions they need.
 
 ![portmap dashboard](screenshot.png)
 
@@ -54,6 +54,29 @@ portmap update 1 --name "new-name"
 - **Tiny binary** — single static binary, no runtime dependencies
 - **Startup service** — `portmap install` registers launchd (macOS) or systemd (Linux)
 
+## Claude Code skills
+
+This repo is a [Claude Code plugin marketplace](https://docs.anthropic.com/en/docs/claude-code/skills) with two installable skills:
+
+| Plugin | Description |
+|--------|-------------|
+| `portmap` | Teaches Claude to query and manage ports via the portmap API or CLI |
+| `port-allocation` | Teaches Claude to pick an available port, document it, and register it when creating new services |
+
+### Install as plugins
+
+```
+/plugin marketplace add JonasKs/portmap
+/plugin install portmap@portmap
+/plugin install port-allocation@portmap
+```
+
+Copy the skill files from [`skills/`](skills/) into your project's `.claude/skills/` directory and adapt to your conventions.
+
 ## License
 
 MIT
+
+## AI Use Disclaimer
+
+This codebase has been built with a lot of support of AI. AI contributions welcome.

@@ -1,0 +1,30 @@
+{
+  "name": "portmap",
+  "owner": {
+    "name": "Jonas Krüger Svensson"
+  },
+  "metadata": {
+    "description": "Skills for managing localhost ports with portmap",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "portmap",
+      "description": "Check what's running on localhost, manage port names and tags via the portmap API or CLI",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/portmap"
+      ]
+    },
+    {
+      "name": "port-allocation",
+      "description": "Allocate local dev ports for new services and register them in portmap",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/port-allocation"
+      ]
+    }
+  ]
+}
