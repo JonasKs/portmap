@@ -45,10 +45,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/apps/{id}",
             get(get_app).put(update_app).delete(delete_app),
         )
-        .route(
-            "/api/tag-colors",
-            get(list_tag_colors),
-        )
+        .route("/api/tag-colors", get(list_tag_colors))
         .route(
             "/api/tag-colors/{category}",
             axum::routing::put(set_tag_color).delete(delete_tag_color),
@@ -219,9 +216,7 @@ async fn delete_app(State(state): State<AppState>, Path(id): Path<i64>) -> Statu
 
 // -- Tag colors --
 
-async fn list_tag_colors(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<TagColor>>, StatusCode> {
+async fn list_tag_colors(State(state): State<AppState>) -> Result<Json<Vec<TagColor>>, StatusCode> {
     db::list_tag_colors(&state.db)
         .await
         .map(Json)
