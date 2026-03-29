@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/JonasKs/portmap/compare/portmap-v0.3.0...portmap-v0.3.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* uninstall no longer deletes binary, add brew pre-uninstall hook ([6021b26](https://github.com/JonasKs/portmap/commit/6021b26affef1a0f76205112f9aa4fd9118c1bf8))
+
 ## [0.3.0](https://github.com/JonasKs/portmap/compare/portmap-v0.2.1...portmap-v0.3.0) (2026-03-29)
 
 
