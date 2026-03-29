@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/JonasKs/portmap/compare/portmap-v0.2.0...portmap-v0.2.1) (2026-03-29)
+
+
+### Bug Fixes
+
+* homebrew formula update workflow ([df6b5a7](https://github.com/JonasKs/portmap/commit/df6b5a7411703e3d855afb5781ba56be353dc70e))
+
 ## [0.2.0](https://github.com/JonasKs/portmap/compare/portmap-v0.1.0...portmap-v0.2.0) (2026-03-29)
 
 
