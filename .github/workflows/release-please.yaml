@@ -149,15 +149,21 @@ jobs:
               bin.install "portmap"
             end
 
-            def uninstall_preflight
-              system bin/"portmap", "uninstall"
-            end
-
             service do
               run [opt_bin/"portmap", "serve", "--listen", "1337"]
               keep_alive true
               log_path var/"log/portmap.log"
               error_log_path var/"log/portmap.log"
+            end
+
+            def caveats
+              <<~EOS
+                To start portmap as a background service:
+                  brew services start portmap
+
+                To stop before uninstalling:
+                  brew services stop portmap
+              EOS
             end
 
             test do

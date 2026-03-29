@@ -269,8 +269,24 @@ async fn cmd_update(
     }
 }
 
+fn is_homebrew_install() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.canonicalize().ok())
+        .is_some_and(|p| p.display().to_string().contains("/Cellar/"))
+}
+
 fn cmd_install(port: u16) {
     use std::process::Command as Cmd;
+
+    if is_homebrew_install() {
+        println!("portmap was installed via Homebrew.");
+        println!("Use brew to manage the service:\n");
+        println!("  brew services start jonasks/tap/portmap");
+        println!("  brew services stop jonasks/tap/portmap");
+        println!("  brew services info jonasks/tap/portmap");
+        return;
+    }
 
     let exe = std::env::current_exe().expect("Failed to get binary path");
     let exe_str = exe.display().to_string();
@@ -367,6 +383,14 @@ fn cmd_install(port: u16) {
 
 fn cmd_uninstall(db_flag: &str) {
     use std::process::Command as Cmd;
+
+    if is_homebrew_install() {
+        println!("portmap was installed via Homebrew.");
+        println!("Use brew to uninstall:\n");
+        println!("  brew services stop jonasks/tap/portmap");
+        println!("  brew uninstall jonasks/tap/portmap");
+        return;
+    }
 
     if cfg!(target_os = "macos") {
         let plist = shellexpand("~/Library/LaunchAgents/dev.portmap.plist");
