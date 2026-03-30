@@ -4,8 +4,8 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
-const BATCH_SIZE: usize = 200;
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
+const BATCH_SIZE: usize = 100;
 
 /// Scan a range of ports on localhost and return which ones are open.
 /// Tries both IPv4 (127.0.0.1) and IPv6 (`::1`) since dev servers may
