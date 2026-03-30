@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/JonasKs/portmap/compare/portmap-v0.3.2...portmap-v0.4.0) (2026-03-30)
+
+
+### Features
+
+* show online status and sort by port in CLI list ([2c3e892](https://github.com/JonasKs/portmap/commit/2c3e892ff3982b9e6ae6af08f574721f2e93904e))
+* SSE live updates with shared scanner and row-level diffing ([4ddadad](https://github.com/JonasKs/portmap/commit/4ddadadd656683d821c7f4abdffbaa9d583bb9cd))
+
 ## [0.3.2](https://github.com/JonasKs/portmap/compare/portmap-v0.3.1...portmap-v0.3.2) (2026-03-29)
 
 
