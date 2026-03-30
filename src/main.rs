@@ -131,7 +131,7 @@ async fn main() {
         Some(Command::Kill { target }) => cmd_kill(&db_path, &target).await,
         Some(Command::Install) => cmd_install(cli.listen),
         Some(Command::Uninstall) => cmd_uninstall(&cli.database),
-        Some(Command::Status) => cmd_status(),
+        Some(Command::Status) => cmd_status(cli.listen).await,
     }
 }
 
@@ -188,11 +188,22 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         return;
     }
 
-    println!("{:<20} {:<8} {:<12} STATUS", "NAME", "PORT", "CATEGORY");
-
     // Merge registered apps and unregistered open ports, sorted by port
     let mut registered_ports: std::collections::HashSet<u16> = std::collections::HashSet::new();
-    let mut rows: Vec<(String, u16, String, bool)> = Vec::new();
+    let mut rows: Vec<(String, u16, String, &str)> = Vec::new();
+
+    // Portmap itself at the top
+    let pm_status = if alive.contains(&dashboard_port) {
+        "up"
+    } else {
+        "down"
+    };
+    rows.push((
+        "portmap".to_string(),
+        dashboard_port,
+        "portmap".to_string(),
+        pm_status,
+    ));
 
     for app in &apps {
         let port = u16::try_from(app.port).unwrap_or(0);
@@ -202,8 +213,12 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         } else {
             app.name.clone()
         };
-        rows.push((name, port, app.category.clone(), alive.contains(&port)));
+        let status = if alive.contains(&port) { "up" } else { "down" };
+        rows.push((name, port, app.category.clone(), status));
     }
+
+    // Sort registered rows (skip portmap at index 0) by port
+    rows[1..].sort_by_key(|r| r.1);
 
     for &port in &alive {
         if registered_ports.contains(&port) || port == dashboard_port {
@@ -211,26 +226,32 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         }
         let name =
             portmap::known_ports::lookup(port).map_or("-".to_string(), |k| k.name.to_string());
-        rows.push((name, port, String::new(), true));
+        rows.push((name, port, String::new(), "up"));
     }
 
-    rows.sort_by_key(|r| r.1);
+    // Compute column widths
+    let w_name = std::cmp::max(rows.iter().map(|r| r.0.len()).max().unwrap_or(4), 4);
+    let w_port = 4;
+    let w_cat = std::cmp::max(rows.iter().map(|r| r.2.len()).max().unwrap_or(8), 8);
 
-    // Show portmap itself at the top (check if it's actually running)
-    let pm_status = if alive.contains(&dashboard_port) {
-        "up"
-    } else {
-        "down"
-    };
-    println!(
-        "{:<20} {:<8} {:<12} {pm_status}",
-        "portmap", dashboard_port, "portmap"
+    let divider = format!(
+        "+-{}-+-{}-+-{}-+--------+",
+        "-".repeat(w_name),
+        "-".repeat(w_port),
+        "-".repeat(w_cat)
     );
 
-    for (name, port, category, up) in &rows {
-        let status = if *up { "up" } else { "down" };
-        println!("{name:<20} {port:<8} {category:<12} {status}");
+    println!("{divider}");
+    println!(
+        "| {:<w_name$} | {:<w_port$} | {:<w_cat$} | STATUS |",
+        "NAME", "PORT", "CATEGORY"
+    );
+    println!("{divider}");
+    for (name, port, category, status) in &rows {
+        let dot = if *status == "up" { "●" } else { "○" };
+        println!("| {name:<w_name$} | {port:<w_port$} | {category:<w_cat$} | {dot} {status:<4} |");
     }
+    println!("{divider}");
 }
 
 async fn cmd_add(db_path: &str, name: Option<&str>, port: i64, category: &str) {
@@ -540,20 +561,66 @@ fn cmd_uninstall(db_flag: &str) {
     println!("portmap has been uninstalled.");
 }
 
-fn cmd_status() {
+async fn cmd_status(listen: u16) {
     use std::process::Command as Cmd;
 
+    // Check if actually running
+    let alive = portmap::scanner::scan_ports(listen, listen, 0).await;
+    let running = alive.contains(&listen);
+
+    println!(
+        "portmap {} on :{}",
+        if running {
+            "is running"
+        } else {
+            "is not running"
+        },
+        listen
+    );
+    if running {
+        println!("Dashboard: http://localhost:{listen}");
+    }
+
+    // Check service installation
     if cfg!(target_os = "macos") {
         let uid = get_uid();
-        let target = format!("gui/{uid}/dev.portmap");
-        let status = Cmd::new("launchctl").args(["print", &target]).status();
-        if !status.is_ok_and(|s| s.success()) {
-            println!("Not running.");
+        let brew_target = format!("gui/{uid}/homebrew.mxcl.portmap");
+        let manual_target = format!("gui/{uid}/dev.portmap");
+
+        let brew_ok = Cmd::new("launchctl")
+            .args(["print", &brew_target])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+
+        let manual_ok = Cmd::new("launchctl")
+            .args(["print", &manual_target])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+
+        if brew_ok {
+            println!("Service:   homebrew (launch on login)");
+        } else if manual_ok {
+            println!("Service:   launchd (launch on login)");
+        } else {
+            println!("Service:   not installed");
         }
     } else {
-        let _ = Cmd::new("systemctl")
-            .args(["--user", "status", "portmap"])
-            .status();
+        let systemd_ok = Cmd::new("systemctl")
+            .args(["--user", "is-enabled", "portmap"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+
+        if systemd_ok {
+            println!("Service:   systemd (launch on login)");
+        } else {
+            println!("Service:   not installed");
+        }
     }
 }
 
