@@ -172,8 +172,8 @@ pub fn render(
   </div>
   <div id="row-menu" style="display:none">
     <button class="row-menu-item" data-action="edit">Edit</button>
-    <button class="row-menu-item row-menu-warn" data-action="kill">Kill process</button>
-    <button class="row-menu-item row-menu-danger" data-action="delete">Unregister</button>
+    <button class="row-menu-item" data-action="delete">Unregister</button>
+    <button class="row-menu-item row-menu-danger" data-action="kill">Kill process</button>
   </div>
   <div id="color-menu" style="display:none">
     <div class="color-grid"></div>
