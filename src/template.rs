@@ -236,10 +236,9 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
         name_esc.clone()
     };
 
-    let edit_btn = r#"<button class="edit-btn" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))" title="Edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>"#;
     let delete_btn = if app_id > 0 {
         format!(
-            r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})">&times;</button>"#
+            r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})" title="Unregister">&times;</button>"#
         )
     } else {
         String::new()
@@ -247,7 +246,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
 
     let kill_btn = if alive {
         format!(
-            r#"<button class="kill-btn" onclick="event.stopPropagation();killPort({port})" title="Kill process"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>"#
+            r#"<button class="kill-btn" onclick="event.stopPropagation();killPort({port})" title="Kill process"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/><path d="M12 2v2M12 20v2"/></svg></button>"#
         )
     } else {
         String::new()
@@ -269,7 +268,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
-          <td class="c-del">{kill_btn}{edit_btn}{delete_btn}</td>
+          <td class="c-del">{kill_btn}{delete_btn}</td>
         </tr>"#,
     );
 
@@ -540,21 +539,7 @@ const CSS: &str = r"
   .row:hover .kill-btn { color: #555; }
   .kill-btn:hover { color: #ef4444 !important; }
 
-  .c-del .kill-btn + .edit-btn,
-  .c-del .edit-btn + .del { margin-left: 4px; }
-
-  .edit-btn {
-    background: none;
-    border: none;
-    color: transparent;
-    cursor: pointer;
-    padding: 0;
-    line-height: 1;
-    transition: color 0.1s;
-    vertical-align: middle;
-  }
-  .row:hover .edit-btn { color: #666; }
-  .edit-btn:hover { color: #ccc !important; }
+  .c-del .kill-btn + .del { margin-left: 6px; }
 
   .del {
     background: none;
