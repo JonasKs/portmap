@@ -229,8 +229,15 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         rows.push((name, port, String::new(), "up"));
     }
 
+    let w_name = std::cmp::max(rows.iter().map(|r| r.0.len()).max().unwrap_or(4), 4);
+    let w_cat = std::cmp::max(rows.iter().map(|r| r.2.len()).max().unwrap_or(8), 8);
+
+    println!(
+        "{:<w_name$}  {:<6} {:<w_cat$}  STATUS",
+        "NAME", "PORT", "CATEGORY"
+    );
     for (name, port, category, status) in &rows {
-        println!("{name} :{port} {category} {status}");
+        println!("{name:<w_name$}  {port:<6} {category:<w_cat$}  {status}");
     }
 }
 
