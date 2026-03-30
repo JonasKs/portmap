@@ -57,8 +57,10 @@ portmap --version
 
 ## Features
 
-- **Port scanning** — discovers all active localhost services
-- **Name & tag ports** — click to navigate, right-click (or pencil icon) to edit inline
+- **Port scanning** — discovers all active localhost services (IPv4 + IPv6)
+- **Live dashboard** — SSE-powered updates, no page reloads
+- **Name & tag ports** — click to navigate, pencil icon or right-click to edit
+- **Kill from dashboard** — right-click a row to kill the process or unregister it
 - **Optional names** — tag a port with just a category, name is not required
 - **Category badges** — tag services as frontend, backend, mcp, or anything
 - **Custom tag colors** — right-click filter buttons to pick a color per category
