@@ -581,14 +581,15 @@ async fn cmd_status(listen: u16) {
         if ok { "systemd" } else { "none" }
     };
 
-    let url = format!("http://localhost:{listen}");
     let startup = if service == "none" { "no" } else { "yes" };
 
     println!("+------------+-------------------------------+");
     println!("| portmap    | {status_dot} {status_text:<27} |");
     println!("+------------+-------------------------------+");
-    println!("| port       | {listen:<29} |");
-    println!("| dashboard  | {url:<29} |");
+    if running {
+        let url = format!("http://localhost:{listen}");
+        println!("| dashboard  | {url:<29} |");
+    }
     println!("| service    | {service:<29} |");
     println!("| on startup | {startup:<29} |");
     println!("+------------+-------------------------------+");
