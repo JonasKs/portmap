@@ -170,6 +170,11 @@ pub fn render(
       <span class="links-port">:{dashboard_port}</span>
     </div>
   </div>
+  <div id="row-menu" style="display:none">
+    <button class="row-menu-item" data-action="edit">Edit</button>
+    <button class="row-menu-item row-menu-warn" data-action="kill">Kill process</button>
+    <button class="row-menu-item row-menu-danger" data-action="delete">Unregister</button>
+  </div>
   <div id="color-menu" style="display:none">
     <div class="color-grid"></div>
     <button class="color-reset">reset</button>
@@ -236,28 +241,12 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
         name_esc.clone()
     };
 
-    let delete_btn = if app_id > 0 {
-        format!(
-            r#"<button class="del" onclick="event.stopPropagation();deleteApp({app_id})" title="Unregister">&times;</button>"#
-        )
-    } else {
-        String::new()
-    };
-
-    let kill_btn = if alive {
-        format!(
-            r#"<button class="kill-btn" onclick="event.stopPropagation();killPort({port})" title="Kill process"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/><path d="M12 2v2M12 20v2"/></svg></button>"#
-        )
-    } else {
-        String::new()
-    };
-
     let mut html = String::new();
     let _ = write!(
         html,
         r#"
         <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{cat_esc}" data-alive="{alive}"
-            onclick="go({port})" oncontextmenu="inlineEdit(event, this)">
+            onclick="go({port})" oncontextmenu="showRowMenu(event, this)">
           <td class="c-status"><span class="dot {status}"></span></td>
           <td class="c-name">
             <span class="c-name-text">{display_name}</span>
@@ -268,7 +257,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
-          <td class="c-del">{kill_btn}{delete_btn}</td>
+          <td class="c-actions"><button class="act-edit" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))" title="Edit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button><button class="act-more" onclick="event.stopPropagation();showRowMenu(event, this.closest('.row'))" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></td>
         </tr>"#,
     );
 
@@ -517,44 +506,33 @@ const CSS: &str = r"
     padding-right: 0.4rem;
   }
 
-  .c-del {
-    width: 50px;
-    text-align: center;
-    padding-right: 0.6rem;
+  .c-actions {
+    width: 56px;
+    text-align: right;
+    padding-right: 1rem;
     white-space: nowrap;
     vertical-align: middle;
     line-height: 0;
   }
 
-  .kill-btn {
+  .c-actions button {
     background: none;
     border: none;
     color: transparent;
     cursor: pointer;
-    padding: 0;
-    line-height: 1;
-    transition: color 0.1s;
-    vertical-align: middle;
-  }
-  .row:hover .kill-btn { color: #555; }
-  .kill-btn:hover { color: #ef4444 !important; }
-
-  .c-del .kill-btn + .del { margin-left: 6px; }
-
-  .del {
-    background: none;
-    border: none;
-    color: transparent;
-    font-size: 0.85rem;
-    cursor: pointer;
-    padding: 0;
+    padding: 3px;
     line-height: 1;
     transition: color 0.1s;
     vertical-align: middle;
   }
 
-  .row:hover .del { color: #666; }
-  .del:hover { color: #ef4444 !important; }
+  .c-actions button + button { margin-left: 4px; }
+
+  .row:hover .act-edit { color: #666; }
+  .act-edit:hover { color: #ccc !important; }
+
+  .row:hover .act-more { color: #444; }
+  .act-more:hover { color: #999 !important; }
 
   .links {
     display: flex;
@@ -665,6 +643,47 @@ const CSS: &str = r"
 
   .inline-input:focus {
     border-color: rgba(255,255,255,0.25);
+  }
+
+  #row-menu {
+    position: fixed;
+    z-index: 100;
+    background: #1a1a1e;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 0.3rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    min-width: 140px;
+  }
+
+  .row-menu-item {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: #999;
+    font-family: inherit;
+    font-size: 0.7rem;
+    padding: 0.35rem 0.6rem;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.1s;
+  }
+
+  .row-menu-item:hover {
+    background: rgba(255,255,255,0.06);
+    color: #ddd;
+  }
+
+  .row-menu-warn:hover {
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+  }
+
+  .row-menu-danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
   }
 
   #color-menu {
@@ -819,6 +838,52 @@ async function killPort(port) {
   await fetch(`/api/kill/${port}`, { method: 'POST' });
 }
 
+// -- Row context menu --
+let rowMenuTarget = null;
+
+function showRowMenu(e, row) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (editingRow) cancelEdit();
+  rowMenuTarget = row;
+
+  const menu = document.getElementById('row-menu');
+  const port = row.dataset.port;
+  const appId = parseInt(row.dataset.appId);
+  const alive = row.dataset.alive === 'true';
+
+  // Show/hide items based on context
+  const killItem = menu.querySelector('[data-action="kill"]');
+  const delItem = menu.querySelector('[data-action="delete"]');
+  killItem.style.display = alive ? '' : 'none';
+  delItem.style.display = appId > 0 ? '' : 'none';
+
+  menu.style.display = 'block';
+  const x = Math.min(e.clientX, window.innerWidth - 160);
+  const y = Math.min(e.clientY, window.innerHeight - 140);
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+}
+
+function hideRowMenu() {
+  document.getElementById('row-menu').style.display = 'none';
+  rowMenuTarget = null;
+}
+
+function initRowMenu() {
+  const menu = document.getElementById('row-menu');
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.row-menu-item');
+    if (!item || !rowMenuTarget) return;
+    const action = item.dataset.action;
+    const row = rowMenuTarget;
+    hideRowMenu();
+    if (action === 'edit') { e.preventDefault(); inlineEdit(e, row); }
+    else if (action === 'kill') killPort(parseInt(row.dataset.port));
+    else if (action === 'delete') deleteApp(parseInt(row.dataset.appId));
+  });
+}
+
 // -- Color picker --
 const COLOR_SWATCHES = [
   '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6',
@@ -875,15 +940,16 @@ async function resetTagColor() {
 }
 
 document.addEventListener('keydown', e => {
-  if (!editingRow && !colorMenuTarget) return;
   if (e.key === 'Enter' && editingRow) { e.preventDefault(); saveEdit(editingRow); }
-  if (e.key === 'Escape') { cancelEdit(); hideColorMenu(); }
+  if (e.key === 'Escape') { cancelEdit(); hideColorMenu(); hideRowMenu(); }
 });
 
 document.addEventListener('click', e => {
   if (editingRow && !editingRow.contains(e.target)) cancelEdit();
-  const menu = document.getElementById('color-menu');
-  if (colorMenuTarget && !menu.contains(e.target)) hideColorMenu();
+  const colorMenu = document.getElementById('color-menu');
+  if (colorMenuTarget && !colorMenu.contains(e.target)) hideColorMenu();
+  const rowMenu = document.getElementById('row-menu');
+  if (rowMenuTarget && !rowMenu.contains(e.target)) hideRowMenu();
 });
 
 function triggerRefresh() {
@@ -992,6 +1058,7 @@ function applyRefresh(data) {
 const evtSource = new EventSource('/events');
 evtSource.addEventListener('refresh', (e) => {
   document.getElementById('refresh-btn').classList.remove('spinning');
+  hideRowMenu();
   const data = JSON.parse(e.data);
   if (editingRow) {
     pendingRefresh = data;
@@ -1001,5 +1068,6 @@ evtSource.addEventListener('refresh', (e) => {
 });
 
 initColorMenu();
+initRowMenu();
 </script>
 "#;
