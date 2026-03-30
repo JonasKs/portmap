@@ -34,11 +34,8 @@ enum Command {
         scan_end: u16,
     },
 
-    /// List registered apps
+    /// List all ports (registered apps + open ports)
     List,
-
-    /// List all open ports (scan)
-    Scan,
 
     /// Add an app
     Add {
@@ -55,16 +52,16 @@ enum Command {
         category: String,
     },
 
-    /// Remove an app by ID or port
+    /// Remove an app by port or name
     Remove {
-        /// App ID or port number
+        /// Port number or app name
         target: String,
     },
 
-    /// Update an app
+    /// Update an app by port or name
     Update {
-        /// App ID
-        id: i64,
+        /// Port number or app name
+        target: String,
 
         /// New name
         #[arg(short, long)]
@@ -77,6 +74,12 @@ enum Command {
         /// New category
         #[arg(short, long)]
         category: Option<String>,
+    },
+
+    /// Kill the process running on a port
+    Kill {
+        /// Port number or app name
+        target: String,
     },
 
     /// Install as a launch agent (macOS) or systemd service (Linux)
@@ -112,8 +115,7 @@ async fn main() {
             };
             cmd_serve(&db_path, cli.listen, scan_start, scan_end).await;
         }
-        Some(Command::List) => cmd_list(&db_path).await,
-        Some(Command::Scan) => cmd_scan(cli.listen).await,
+        Some(Command::List) => cmd_list(&db_path, cli.listen).await,
         Some(Command::Add {
             name,
             port,
@@ -121,11 +123,12 @@ async fn main() {
         }) => cmd_add(&db_path, name.as_deref(), port, &category).await,
         Some(Command::Remove { target }) => cmd_remove(&db_path, &target).await,
         Some(Command::Update {
-            id,
+            target,
             name,
             port,
             category,
-        }) => cmd_update(&db_path, id, name, port, category).await,
+        }) => cmd_update(&db_path, &target, name, port, category).await,
+        Some(Command::Kill { target }) => cmd_kill(&db_path, &target).await,
         Some(Command::Install) => cmd_install(cli.listen),
         Some(Command::Uninstall) => cmd_uninstall(&cli.database),
         Some(Command::Status) => cmd_status(),
@@ -170,7 +173,7 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
     axum::serve(listener, app).await.expect("Server error");
 }
 
-async fn cmd_list(db_path: &str) {
+async fn cmd_list(db_path: &str, dashboard_port: u16) {
     let db = portmap::db::init(db_path)
         .await
         .expect("Failed to open database");
@@ -178,43 +181,50 @@ async fn cmd_list(db_path: &str) {
     let apps = portmap::db::list_apps(&db)
         .await
         .expect("Failed to list apps");
+    let alive = portmap::scanner::scan_ports(1000, 9999, 0).await;
 
-    if apps.is_empty() {
-        println!("No registered apps.");
+    if apps.is_empty() && alive.is_empty() {
+        println!("No ports found.");
         return;
     }
 
-    let alive = portmap::scanner::scan_ports(1000, 9999, 0).await;
-    let mut apps = apps;
-    apps.sort_by_key(|a| a.port);
+    println!("{:<20} {:<8} {:<12} STATUS", "NAME", "PORT", "CATEGORY");
 
-    println!(
-        "{:<6} {:<20} {:<8} {:<12} STATUS",
-        "ID", "NAME", "PORT", "CATEGORY"
-    );
+    // Merge registered apps and unregistered open ports, sorted by port
+    let mut registered_ports: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    let mut rows: Vec<(String, u16, String, bool)> = Vec::new();
+
     for app in &apps {
         let port = u16::try_from(app.port).unwrap_or(0);
-        let status = if alive.contains(&port) { "up" } else { "down" };
+        registered_ports.insert(port);
         let name = if app.name.is_empty() {
             "-".to_string()
         } else {
             app.name.clone()
         };
-        println!(
-            "{:<6} {:<20} {:<8} {:<12} {}",
-            app.id, name, app.port, app.category, status
-        );
+        rows.push((name, port, app.category.clone(), alive.contains(&port)));
     }
-}
 
-async fn cmd_scan(dashboard_port: u16) {
-    let ports = portmap::scanner::scan_ports(1000, 9999, dashboard_port).await;
-    if ports.is_empty() {
-        println!("No open ports found.");
-        return;
+    for &port in &alive {
+        if registered_ports.contains(&port) || port == dashboard_port {
+            continue;
+        }
+        let name =
+            portmap::known_ports::lookup(port).map_or("-".to_string(), |k| k.name.to_string());
+        rows.push((name, port, String::new(), true));
     }
-    for port in &ports {
-        println!(":{port}");
+
+    rows.sort_by_key(|r| r.1);
+
+    // Always show portmap itself at the top
+    println!(
+        "{:<20} {:<8} {:<12} up",
+        "portmap", dashboard_port, "portmap"
+    );
+
+    for (name, port, category, up) in &rows {
+        let status = if *up { "up" } else { "down" };
+        println!("{name:<20} {port:<8} {category:<12} {status}");
     }
 }
 
@@ -245,34 +255,49 @@ async fn cmd_add(db_path: &str, name: Option<&str>, port: i64, category: &str) {
     }
 }
 
+/// Resolve a target (port number or app name) to an app.
+async fn resolve_app(db: &sqlx::SqlitePool, target: &str) -> Option<portmap::db::App> {
+    if let Ok(port) = target.parse::<i64>()
+        && let Ok(Some(app)) = portmap::db::find_app_by_port(db, port).await
+    {
+        return Some(app);
+    }
+    if let Ok(Some(app)) = portmap::db::find_app_by_name(db, target).await {
+        return Some(app);
+    }
+    None
+}
+
+/// Resolve a target to a port number (from DB or direct parse).
+fn resolve_port(target: &str, app: Option<&portmap::db::App>) -> Option<u16> {
+    if let Some(app) = app {
+        return u16::try_from(app.port).ok();
+    }
+    target.parse::<u16>().ok()
+}
+
 async fn cmd_remove(db_path: &str, target: &str) {
     let db = portmap::db::init(db_path)
         .await
         .expect("Failed to open database");
 
-    // Try as ID first, then as port number
-    if let Ok(id) = target.parse::<i64>() {
-        // Check if it's a valid app ID
-        if let Ok(Some(_)) = portmap::db::get_app(&db, id).await
-            && portmap::db::delete_app(&db, id).await.unwrap_or(false)
-        {
-            println!("Removed app #{id}");
-            return;
-        }
-        // Try as port number
-        if let Ok(Some(app)) = portmap::db::find_app_by_port(&db, id).await
-            && portmap::db::delete_app(&db, app.id).await.unwrap_or(false)
-        {
-            println!("Removed {} (port {id})", app.name);
-            return;
-        }
+    if let Some(app) = resolve_app(&db, target).await
+        && portmap::db::delete_app(&db, app.id).await.unwrap_or(false)
+    {
+        let display = if app.name.is_empty() {
+            format!(":{}", app.port)
+        } else {
+            app.name
+        };
+        println!("Removed {display} (port {})", app.port);
+        return;
     }
-    eprintln!("No app found with ID or port: {target}");
+    eprintln!("No app found for: {target}");
 }
 
 async fn cmd_update(
     db_path: &str,
-    id: i64,
+    target: &str,
     name: Option<String>,
     port: Option<i64>,
     category: Option<String>,
@@ -281,20 +306,78 @@ async fn cmd_update(
         .await
         .expect("Failed to open database");
 
+    let Some(app) = resolve_app(&db, target).await else {
+        eprintln!("No app found for: {target}");
+        return;
+    };
+
     let update = portmap::db::UpdateApp {
         name,
         port,
         category,
     };
 
-    match portmap::db::update_app(&db, id, &update).await {
-        Ok(Some(app)) => println!(
-            "Updated #{}: {} on :{} [{}]",
-            app.id, app.name, app.port, app.category
-        ),
-        Ok(None) => eprintln!("No app found with ID {id}"),
+    match portmap::db::update_app(&db, app.id, &update).await {
+        Ok(Some(updated)) => {
+            let display = if updated.name.is_empty() {
+                format!(":{}", updated.port)
+            } else {
+                updated.name
+            };
+            println!(
+                "Updated {display} on :{} [{}]",
+                updated.port, updated.category
+            );
+        }
+        Ok(None) => eprintln!("No app found for: {target}"),
         Err(e) => eprintln!("Failed: {e}"),
     }
+}
+
+async fn cmd_kill(db_path: &str, target: &str) {
+    use std::process::Command as Cmd;
+
+    let db = portmap::db::init(db_path)
+        .await
+        .expect("Failed to open database");
+
+    let app = resolve_app(&db, target).await;
+    let Some(port) = resolve_port(target, app.as_ref()) else {
+        eprintln!("Could not resolve port for: {target}");
+        return;
+    };
+
+    // Find PIDs listening on this port
+    let output = Cmd::new("lsof").args(["-ti", &format!(":{port}")]).output();
+
+    let Ok(output) = output else {
+        eprintln!("Failed to run lsof");
+        return;
+    };
+
+    let pids: Vec<&str> = std::str::from_utf8(&output.stdout)
+        .unwrap_or("")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if pids.is_empty() {
+        println!("Nothing running on :{port}");
+        return;
+    }
+
+    let display = app.as_ref().map_or(format!(":{port}"), |a| {
+        if a.name.is_empty() {
+            format!(":{port}")
+        } else {
+            a.name.clone()
+        }
+    });
+
+    for pid in &pids {
+        let _ = Cmd::new("kill").arg(pid).status();
+    }
+    println!("Killed {display} (port {port})");
 }
 
 fn is_homebrew_install() -> bool {

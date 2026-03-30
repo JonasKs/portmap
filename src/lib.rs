@@ -395,7 +395,7 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
 
     let mut md = format!(
         "---\ntitle: portmap\nurl: http://localhost:{dashboard_port}\n---\n\n\
-         # portmap\n\n\
+         # portmap (:{dashboard_port})\n\n\
          Map names to localhost ports. Made for agents and humans.\n\n"
     );
 

@@ -44,12 +44,12 @@ portmap serve                          # run in foreground (default)
 portmap install                        # start on login (launchd/systemd)
 portmap uninstall                      # stop service + remove db
 portmap status                         # check if running
-portmap list                           # show registered apps
-portmap scan                           # discover open ports
+portmap list                           # show all ports (registered + open)
 portmap add --name "my-app" -P 3000 -c frontend
 portmap add -P 8080 -c backend         # tag a port without naming it
-portmap remove 3000                    # remove by port or ID
-portmap update 1 --name "new-name"
+portmap remove 3000                    # remove by port or name
+portmap update 3000 --name "new-name"  # update by port or name
+portmap kill 3000                      # kill process on port (by port or name)
 portmap --version
 ```
 

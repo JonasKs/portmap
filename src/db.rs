@@ -95,6 +95,13 @@ pub async fn update_app(
     .await
 }
 
+pub async fn find_app_by_name(pool: &SqlitePool, name: &str) -> Result<Option<App>, sqlx::Error> {
+    sqlx::query_as::<_, App>("SELECT id, name, port, category, created_at FROM apps WHERE name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}
+
 pub async fn delete_app(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
     let result = sqlx::query("DELETE FROM apps WHERE id = ?")
         .bind(id)

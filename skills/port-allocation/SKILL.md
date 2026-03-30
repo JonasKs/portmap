@@ -36,6 +36,12 @@ If portmap is not running, skip silently.
 ### Updating an existing registration
 
 ```bash
-portmap remove <old-port>
+portmap update <port-or-name> --name "<new-name>" -c <category>
+```
+
+Or remove and re-add:
+
+```bash
+portmap remove <port-or-name>
 portmap add --name "<new-name>" -P <new-port> -c <category>
 ```
