@@ -4,10 +4,12 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_millis(80);
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const BATCH_SIZE: usize = 200;
 
 /// Scan a range of ports on localhost and return which ones are open.
+/// Tries both IPv4 (127.0.0.1) and IPv6 (`::1`) since dev servers may
+/// bind to either.
 /// Skips `exclude_port` (the dashboard's own port).
 pub async fn scan_ports(start: u16, end: u16, exclude_port: u16) -> Vec<u16> {
     let ports: Vec<u16> = (start..=end).filter(|p| *p != exclude_port).collect();
@@ -18,10 +20,16 @@ pub async fn scan_ports(start: u16, end: u16, exclude_port: u16) -> Vec<u16> {
 
         for &port in chunk {
             handles.push(tokio::spawn(async move {
-                let addr = SocketAddr::from(([127, 0, 0, 1], port));
-                match timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
-                    Ok(Ok(_)) => Some(port),
-                    _ => None,
+                let v4 = SocketAddr::from(([127, 0, 0, 1], port));
+                let v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port));
+                let (r4, r6) = tokio::join!(
+                    timeout(CONNECT_TIMEOUT, TcpStream::connect(v4)),
+                    timeout(CONNECT_TIMEOUT, TcpStream::connect(v6)),
+                );
+                if matches!(r4, Ok(Ok(_))) || matches!(r6, Ok(Ok(_))) {
+                    Some(port)
+                } else {
+                    None
                 }
             }));
         }
