@@ -216,9 +216,14 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
 
     rows.sort_by_key(|r| r.1);
 
-    // Always show portmap itself at the top
+    // Show portmap itself at the top (check if it's actually running)
+    let pm_status = if alive.contains(&dashboard_port) {
+        "up"
+    } else {
+        "down"
+    };
     println!(
-        "{:<20} {:<8} {:<12} up",
+        "{:<20} {:<8} {:<12} {pm_status}",
         "portmap", dashboard_port, "portmap"
     );
 
