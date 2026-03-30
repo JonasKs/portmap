@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0](https://github.com/JonasKs/portmap/compare/portmap-v0.4.0...portmap-v0.5.0) (2026-03-30)
+
+
+### Features
+
+* add centered GitHub logo to dashboard footer ([f2dfe92](https://github.com/JonasKs/portmap/commit/f2dfe92855d2052a0932c7d09f5450eb25321aa5))
+* add kill command, merge scan into list, resolve by port or name ([715f3f4](https://github.com/JonasKs/portmap/commit/715f3f4014e294c1693d29dd5cc7dc7c24a1a01c))
+* kill processes from dashboard UI ([6f9c73b](https://github.com/JonasKs/portmap/commit/6f9c73b46cf5a7db1d4d56eeec5bc14ad955a570))
+* row action hierarchy with edit + overflow menu ([aa7894e](https://github.com/JonasKs/portmap/commit/aa7894e154db75c15dbf93ac759c5f46abb28eae))
+* table output for list, smarter status, unique names ([5510f12](https://github.com/JonasKs/portmap/commit/5510f123d5d5de582b639872ca90734eac4e63ea))
+* unified color dots, row highlights, and clearer row states ([1b08b93](https://github.com/JonasKs/portmap/commit/1b08b93a40d75cac825159e5875365424d668a70))
+
+
+### Bug Fixes
+
+* check if portmap is actually running in list output ([ab11cae](https://github.com/JonasKs/portmap/commit/ab11cae75b0d4ee512d040af7f4eb592ec6b70b6))
+* enforce unique app names via partial index ([23fdbff](https://github.com/JonasKs/portmap/commit/23fdbffd45102c069a3d8405f8c7b5a1586a7f0c))
+* only kill listening process, not clients connected to the port ([d88dcf7](https://github.com/JonasKs/portmap/commit/d88dcf7faaa6cc0ecee411741f95c6ba39933394))
+* only show dashboard URL in status when running ([3841121](https://github.com/JonasKs/portmap/commit/3841121635b82d47290fcaa33c526764699472ad))
+* plain output for list (LLM-friendly), table for status (human) ([4bc6e84](https://github.com/JonasKs/portmap/commit/4bc6e848e5dd127e2438d5aa700af243101b60fa))
+* reorder context menu — kill at bottom in red ([0efd945](https://github.com/JonasKs/portmap/commit/0efd945fae93fc6474109caab1867692695c7ff0))
+* right-click edit by stopping event propagation ([a9138f8](https://github.com/JonasKs/portmap/commit/a9138f857df6cca646fcbe418f9735f141324383))
+* scan both IPv4 and IPv6 loopback for port detection ([cb2a877](https://github.com/JonasKs/portmap/commit/cb2a8777c912eeba8c3a049f0ab39b1f7efae293))
+
 ## [0.4.0](https://github.com/JonasKs/portmap/compare/portmap-v0.3.2...portmap-v0.4.0) (2026-03-30)
 
 
