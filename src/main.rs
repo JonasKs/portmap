@@ -137,12 +137,26 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
         .await
         .expect("Failed to initialize database");
 
+    let (tx, rx) = tokio::sync::watch::channel(String::new());
+    let scan_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+
     let state = AppState {
-        db,
+        db: db.clone(),
         dashboard_port: port,
         scan_start,
         scan_end,
+        updates: rx,
+        scan_notify: scan_notify.clone(),
     };
+
+    tokio::spawn(portmap::scanner_loop(
+        db,
+        scan_start,
+        scan_end,
+        port,
+        tx,
+        scan_notify,
+    ));
 
     let app = portmap::create_router(state);
 
@@ -170,11 +184,25 @@ async fn cmd_list(db_path: &str) {
         return;
     }
 
-    println!("{:<6} {:<20} {:<8} CATEGORY", "ID", "NAME", "PORT");
+    let alive = portmap::scanner::scan_ports(1000, 9999, 0).await;
+    let mut apps = apps;
+    apps.sort_by_key(|a| a.port);
+
+    println!(
+        "{:<6} {:<20} {:<8} {:<12} STATUS",
+        "ID", "NAME", "PORT", "CATEGORY"
+    );
     for app in &apps {
+        let port = u16::try_from(app.port).unwrap_or(0);
+        let status = if alive.contains(&port) { "up" } else { "down" };
+        let name = if app.name.is_empty() {
+            "-".to_string()
+        } else {
+            app.name.clone()
+        };
         println!(
-            "{:<6} {:<20} {:<8} {}",
-            app.id, app.name, app.port, app.category
+            "{:<6} {:<20} {:<8} {:<12} {}",
+            app.id, name, app.port, app.category, status
         );
     }
 }
