@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/JonasKs/portmap/compare/portmap-v0.5.0...portmap-v0.5.1) (2026-03-30)
+
+
+### Bug Fixes
+
+* port as first column in portmap list ([576426d](https://github.com/JonasKs/portmap/commit/576426d9673c63b260d8ab9e40d12e7ca7fa8fdf))
+* restore aligned columns and header in portmap list ([c417c48](https://github.com/JonasKs/portmap/commit/c417c48a15557a2896558631fdf499543eff54bf))
+
 ## [0.5.0](https://github.com/JonasKs/portmap/compare/portmap-v0.4.0...portmap-v0.5.0) (2026-03-30)
 
 
