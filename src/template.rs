@@ -245,6 +245,14 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
         String::new()
     };
 
+    let kill_btn = if alive {
+        format!(
+            r#"<button class="kill-btn" onclick="event.stopPropagation();killPort({port})" title="Kill process"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>"#
+        )
+    } else {
+        String::new()
+    };
+
     let mut html = String::new();
     let _ = write!(
         html,
@@ -261,7 +269,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
-          <td class="c-del">{edit_btn}{delete_btn}</td>
+          <td class="c-del">{kill_btn}{edit_btn}{delete_btn}</td>
         </tr>"#,
     );
 
@@ -519,6 +527,20 @@ const CSS: &str = r"
     line-height: 0;
   }
 
+  .kill-btn {
+    background: none;
+    border: none;
+    color: transparent;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.1s;
+    vertical-align: middle;
+  }
+  .row:hover .kill-btn { color: #555; }
+  .kill-btn:hover { color: #ef4444 !important; }
+
+  .c-del .kill-btn + .edit-btn,
   .c-del .edit-btn + .del { margin-left: 4px; }
 
   .edit-btn {
@@ -806,6 +828,10 @@ function reapplyFilter() {
 
 async function deleteApp(appId) {
   await fetch(`/api/apps/${appId}`, { method: 'DELETE' });
+}
+
+async function killPort(port) {
+  await fetch(`/api/kill/${port}`, { method: 'POST' });
 }
 
 // -- Color picker --
