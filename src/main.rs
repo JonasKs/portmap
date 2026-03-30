@@ -347,8 +347,10 @@ async fn cmd_kill(db_path: &str, target: &str) {
         return;
     };
 
-    // Find PIDs listening on this port
-    let output = Cmd::new("lsof").args(["-ti", &format!(":{port}")]).output();
+    // Find PIDs *listening* on this port (not clients connected to it)
+    let output = Cmd::new("lsof")
+        .args(["-ti", &format!(":{port}"), "-sTCP:LISTEN"])
+        .output();
 
     let Ok(output) = output else {
         eprintln!("Failed to run lsof");
