@@ -229,29 +229,9 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         rows.push((name, port, String::new(), "up"));
     }
 
-    // Compute column widths
-    let w_name = std::cmp::max(rows.iter().map(|r| r.0.len()).max().unwrap_or(4), 4);
-    let w_port = 4;
-    let w_cat = std::cmp::max(rows.iter().map(|r| r.2.len()).max().unwrap_or(8), 8);
-
-    let divider = format!(
-        "+-{}-+-{}-+-{}-+--------+",
-        "-".repeat(w_name),
-        "-".repeat(w_port),
-        "-".repeat(w_cat)
-    );
-
-    println!("{divider}");
-    println!(
-        "| {:<w_name$} | {:<w_port$} | {:<w_cat$} | STATUS |",
-        "NAME", "PORT", "CATEGORY"
-    );
-    println!("{divider}");
     for (name, port, category, status) in &rows {
-        let dot = if *status == "up" { "●" } else { "○" };
-        println!("| {name:<w_name$} | {port:<w_port$} | {category:<w_cat$} | {dot} {status:<4} |");
+        println!("{name} :{port} {category} {status}");
     }
-    println!("{divider}");
 }
 
 async fn cmd_add(db_path: &str, name: Option<&str>, port: i64, category: &str) {
@@ -564,64 +544,54 @@ fn cmd_uninstall(db_flag: &str) {
 async fn cmd_status(listen: u16) {
     use std::process::Command as Cmd;
 
-    // Check if actually running
     let alive = portmap::scanner::scan_ports(listen, listen, 0).await;
     let running = alive.contains(&listen);
+    let status_dot = if running { "●" } else { "○" };
+    let status_text = if running { "running" } else { "stopped" };
 
-    println!(
-        "portmap {} on :{}",
-        if running {
-            "is running"
-        } else {
-            "is not running"
-        },
-        listen
-    );
-    if running {
-        println!("Dashboard: http://localhost:{listen}");
-    }
-
-    // Check service installation
-    if cfg!(target_os = "macos") {
+    // Detect service manager
+    let service = if cfg!(target_os = "macos") {
         let uid = get_uid();
-        let brew_target = format!("gui/{uid}/homebrew.mxcl.portmap");
-        let manual_target = format!("gui/{uid}/dev.portmap");
-
         let brew_ok = Cmd::new("launchctl")
-            .args(["print", &brew_target])
+            .args(["print", &format!("gui/{uid}/homebrew.mxcl.portmap")])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success());
-
         let manual_ok = Cmd::new("launchctl")
-            .args(["print", &manual_target])
+            .args(["print", &format!("gui/{uid}/dev.portmap")])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success());
-
         if brew_ok {
-            println!("Service:   homebrew (launch on login)");
+            "homebrew"
         } else if manual_ok {
-            println!("Service:   launchd (launch on login)");
+            "launchd"
         } else {
-            println!("Service:   not installed");
+            "none"
         }
     } else {
-        let systemd_ok = Cmd::new("systemctl")
+        let ok = Cmd::new("systemctl")
             .args(["--user", "is-enabled", "portmap"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success());
+        if ok { "systemd" } else { "none" }
+    };
 
-        if systemd_ok {
-            println!("Service:   systemd (launch on login)");
-        } else {
-            println!("Service:   not installed");
-        }
-    }
+    let url = format!("http://localhost:{listen}");
+    let startup = if service == "none" { "no" } else { "yes" };
+
+    println!("+------------+-------------------------------+");
+    println!("| portmap    | {status_dot} {status_text:<27} |");
+    println!("+------------+-------------------------------+");
+    println!("| port       | {listen:<29} |");
+    println!("| dashboard  | {url:<29} |");
+    println!("| service    | {service:<29} |");
+    println!("| on startup | {startup:<29} |");
+    println!("+------------+-------------------------------+");
 }
 
 fn get_uid() -> String {
