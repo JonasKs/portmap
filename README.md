@@ -14,6 +14,20 @@ A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/
 brew install jonasks/tap/portmap
 brew services start portmap          # start now + launch on login
 ```
+Bookmark the dashboard at [localhost:1337](http://localhost:1337), or use the CLI:
+
+```bash
+❯ portmap list
+ID     NAME                 PORT     CATEGORY     STATUS
+2      app                  9900     frontend     up
+3      vibe-frontend        9901     frontend     down
+4      mcp-server           9951     mcp          up
+5      email                9952     mcp          up
+6      api                  9953     backend      up
+7      billing              9954     backend      down
+8      azure-mcp            9955     mcp          up
+1      azure-fastapi        9958     backend      up
+```
 
 ### From source
 
@@ -22,7 +36,6 @@ cargo install --path .
 portmap install                      # start now + launch on login
 ```
 
-Dashboard at [localhost:1337](http://localhost:1337). That's it.
 
 ## CLI
 
