@@ -878,7 +878,7 @@ function initRowMenu() {
     const action = item.dataset.action;
     const row = rowMenuTarget;
     hideRowMenu();
-    if (action === 'edit') { e.preventDefault(); inlineEdit(e, row); }
+    if (action === 'edit') { e.stopPropagation(); inlineEdit(e, row); }
     else if (action === 'kill') killPort(parseInt(row.dataset.port));
     else if (action === 'delete') deleteApp(parseInt(row.dataset.appId));
   });
