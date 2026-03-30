@@ -3,15 +3,21 @@ pub mod known_ports;
 pub mod scanner;
 pub mod template;
 
+use std::sync::Arc;
+
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    response::{
+        Html, IntoResponse, Response,
+        sse::{Event, Sse},
+    },
     routing::{get, post},
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
+use tokio::sync::{Notify, watch};
 use tower_http::cors::CorsLayer;
 
 use crate::db::{App, CreateApp, SetTagColor, TagColor, UpdateApp};
@@ -23,6 +29,8 @@ pub struct AppState {
     pub dashboard_port: u16,
     pub scan_start: u16,
     pub scan_end: u16,
+    pub updates: watch::Receiver<String>,
+    pub scan_notify: Arc<Notify>,
 }
 
 #[derive(Serialize)]
@@ -45,6 +53,8 @@ pub fn create_router(state: AppState) -> Router {
             "/api/apps/{id}",
             get(get_app).put(update_app).delete(delete_app),
         )
+        .route("/events", get(sse_handler))
+        .route("/api/refresh", post(trigger_refresh))
         .route("/api/tag-colors", get(list_tag_colors))
         .route(
             "/api/tag-colors/{category}",
@@ -64,13 +74,68 @@ pub async fn create_router_with_test_db() -> Router {
         .await
         .expect("Failed to run migrations");
 
+    let (_tx, rx) = watch::channel(String::new());
+
     let state = AppState {
         db: pool,
         dashboard_port: 1337,
         scan_start: 1000,
         scan_end: 9999,
+        updates: rx,
+        scan_notify: Arc::new(Notify::new()),
     };
     create_router(state)
+}
+
+// -- Shared background scanner --
+
+/// Background task that scans ports periodically and broadcasts changes via
+/// the watch channel. CRUD handlers wake it early via `scan_notify`.
+pub async fn scanner_loop(
+    db: SqlitePool,
+    scan_start: u16,
+    scan_end: u16,
+    dashboard_port: u16,
+    tx: watch::Sender<String>,
+    notify: Arc<Notify>,
+) {
+    let mut prev_json = String::new();
+    let mut forced = false;
+    loop {
+        let alive = scan_ports(scan_start, scan_end, dashboard_port).await;
+        let apps = db::list_apps(&db).await.unwrap_or_default();
+        let tag_colors = db::list_tag_colors(&db).await.unwrap_or_default();
+
+        let rows = template::build_rows(&alive, &apps);
+        let total = rows.len();
+        let plural = if total == 1 { "" } else { "s" };
+        let categories = template::extract_categories(&apps);
+        let filters_html = template::render_filters(&categories);
+        let custom_css = template::render_custom_css(&tag_colors);
+
+        let payload = serde_json::json!({
+            "pill": format!("{total} port{plural}"),
+            "rows": rows,
+            "filters_html": filters_html,
+            "custom_css": custom_css,
+        });
+
+        let json = payload.to_string();
+        if json != prev_json || forced {
+            prev_json.clone_from(&json);
+            let _ = tx.send(json);
+        }
+
+        forced = false;
+        tokio::select! {
+            () = tokio::time::sleep(std::time::Duration::from_secs(10)) => {},
+            () = notify.notified() => {
+                forced = true;
+                // Brief delay to let DB writes settle
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            },
+        }
+    }
 }
 
 // -- Port scanning --
@@ -162,10 +227,11 @@ async fn create_app(
     State(state): State<AppState>,
     Json(body): Json<CreateApp>,
 ) -> Result<(StatusCode, Json<App>), StatusCode> {
-    db::create_app(&state.db, &body)
+    let app = db::create_app(&state.db, &body)
         .await
-        .map(|app| (StatusCode::CREATED, Json(app)))
-        .map_err(|_| StatusCode::CONFLICT)
+        .map_err(|_| StatusCode::CONFLICT)?;
+    state.scan_notify.notify_one();
+    Ok((StatusCode::CREATED, Json(app)))
 }
 
 async fn bulk_create_apps(
@@ -191,6 +257,9 @@ async fn bulk_create_apps(
             }
         }
     }
+    if !created.is_empty() {
+        state.scan_notify.notify_one();
+    }
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -199,19 +268,47 @@ async fn update_app(
     Path(id): Path<i64>,
     Json(body): Json<UpdateApp>,
 ) -> Result<Json<App>, StatusCode> {
-    db::update_app(&state.db, id, &body)
+    let app = db::update_app(&state.db, id, &body)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    state.scan_notify.notify_one();
+    Ok(Json(app))
 }
 
 async fn delete_app(State(state): State<AppState>, Path(id): Path<i64>) -> StatusCode {
     match db::delete_app(&state.db, id).await {
-        Ok(true) => StatusCode::NO_CONTENT,
+        Ok(true) => {
+            state.scan_notify.notify_one();
+            StatusCode::NO_CONTENT
+        }
         Ok(false) => StatusCode::NOT_FOUND,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+async fn trigger_refresh(State(state): State<AppState>) -> StatusCode {
+    state.scan_notify.notify_one();
+    StatusCode::NO_CONTENT
+}
+
+// -- SSE live updates --
+
+async fn sse_handler(
+    State(state): State<AppState>,
+) -> Sse<impl futures_util::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let mut rx = state.updates.clone();
+    let stream = async_stream::stream! {
+        while rx.changed().await.is_ok() {
+            let data = rx.borrow_and_update().clone();
+            if !data.is_empty() {
+                yield Ok(Event::default().event("refresh").data(data));
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new().interval(std::time::Duration::from_secs(15)),
+    )
 }
 
 // -- Tag colors --
@@ -228,10 +325,11 @@ async fn set_tag_color(
     Path(category): Path<String>,
     Json(body): Json<SetTagColor>,
 ) -> Result<Json<TagColor>, StatusCode> {
-    db::set_tag_color(&state.db, &category, &body.color)
+    let tc = db::set_tag_color(&state.db, &category, &body.color)
         .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    state.scan_notify.notify_one();
+    Ok(Json(tc))
 }
 
 async fn delete_tag_color(
@@ -239,7 +337,10 @@ async fn delete_tag_color(
     Path(category): Path<String>,
 ) -> StatusCode {
     match db::delete_tag_color(&state.db, &category).await {
-        Ok(true) => StatusCode::NO_CONTENT,
+        Ok(true) => {
+            state.scan_notify.notify_one();
+            StatusCode::NO_CONTENT
+        }
         Ok(false) => StatusCode::NOT_FOUND,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }

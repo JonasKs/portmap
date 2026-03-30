@@ -16,11 +16,11 @@ cargo test        # run tests
 
 Single-binary Rust/Axum web server with embedded SQLite (sqlx).
 
-- `src/lib.rs` — router, handlers, markdown renderer
+- `src/lib.rs` — router, handlers, markdown renderer, SSE + shared scanner
 - `src/main.rs` — CLI (clap), server startup, uninstall
 - `src/db.rs` — SQLite queries (apps CRUD, tag colors)
 - `src/scanner.rs` — async TCP port scanner
-- `src/template.rs` — HTML dashboard template
+- `src/template.rs` — HTML dashboard template + JS (SSE client, row-level diffing)
 - `migrations/` — SQLite migrations
 - `tests/api_test.rs` — integration tests using in-memory SQLite
 
@@ -28,6 +28,9 @@ Single-binary Rust/Axum web server with embedded SQLite (sqlx).
 
 - Pedantic clippy lints enforced
 - `unsafe` code forbidden
-- All handlers go through `AppState` (contains db pool + config)
+- All handlers go through `AppState` (contains db pool + config + watch channel + notify)
 - Content negotiation: `Accept: text/markdown` serves agent-friendly markdown
 - Tests use `create_router_with_test_db()` which creates an in-memory SQLite
+- Dashboard uses SSE (`/events`) with a shared background scanner (one scan per interval, broadcast to all clients)
+- CRUD handlers wake the scanner via `Notify` for immediate updates
+- CLI output is plain text with no colors (agent-friendly)

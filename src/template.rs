@@ -1,5 +1,7 @@
 use std::fmt::Write;
 
+use serde::Serialize;
+
 use crate::db::{App, TagColor};
 
 /// Escape a string for safe inclusion in HTML text and double-quoted attributes.
@@ -30,48 +32,44 @@ fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
     Some((r, g, b))
 }
 
-#[allow(clippy::too_many_lines)]
-pub fn render(
-    alive_ports: &[u16],
-    apps: &[App],
-    scan_start: u16,
-    scan_end: u16,
-    dashboard_port: u16,
-    tag_colors: &[TagColor],
-) -> String {
-    let rows = build_rows(alive_ports, apps);
-    let total = rows.0;
-    let plural = if total == 1 { "" } else { "s" };
+/// Per-row data sent over SSE for targeted DOM patching.
+#[derive(Clone, Serialize)]
+pub struct RowData {
+    pub port: u16,
+    pub name: String,
+    pub category: String,
+    pub app_id: i64,
+    pub alive: bool,
+    pub html: String,
+}
 
-    let content = if rows.1.is_empty() {
-        r#"<p class="empty">No active ports found.</p>"#.to_string()
-    } else {
-        format!("<table>{}</table>", rows.1)
-    };
-
-    // Collect unique categories from apps for dynamic filter buttons
-    let mut categories: Vec<&str> = apps
-        .iter()
+/// Extract unique, sorted categories from the app list.
+pub fn extract_categories(apps: &[App]) -> Vec<String> {
+    apps.iter()
         .map(|a| a.category.as_str())
         .filter(|c| !c.is_empty())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .collect();
-    categories.sort_unstable();
+        .map(String::from)
+        .collect()
+}
 
-    let mut filter_btns = String::from(
-        r#"<button class="filter active" onclick="filterBy('all', this)">all</button>"#,
-    );
-    for cat in &categories {
+/// Render filter button HTML. Uses event delegation (no inline onclick).
+pub fn render_filters(categories: &[String]) -> String {
+    let mut html = String::from(r#"<button class="filter active">all</button>"#);
+    for cat in categories {
         let cat_esc = html_escape(cat);
         let _ = write!(
-            filter_btns,
-            r#"<button class="filter" data-category="{cat_esc}" onclick="filterBy('{cat_esc}', this)">{cat_esc}</button>"#,
+            html,
+            r#"<button class="filter" data-category="{cat_esc}">{cat_esc}</button>"#,
         );
     }
+    html
+}
 
-    // Generate dynamic CSS for custom tag colors
-    let mut custom_css = String::new();
+/// Render dynamic CSS rules for custom tag colors.
+pub fn render_custom_css(tag_colors: &[TagColor]) -> String {
+    let mut css = String::new();
     for tc in tag_colors {
         let css_class: String = tc
             .category
@@ -81,7 +79,7 @@ pub fn render(
         if let Some((r, g, b)) = hex_to_rgb(&tc.color) {
             let cat_esc = html_escape(&tc.category);
             let _ = write!(
-                custom_css,
+                css,
                 r#"
   .badge.badge-{css_class} {{
     background: rgba({r}, {g}, {b}, 0.08);
@@ -99,6 +97,32 @@ pub fn render(
             );
         }
     }
+    css
+}
+
+#[allow(clippy::too_many_lines)]
+pub fn render(
+    alive_ports: &[u16],
+    apps: &[App],
+    scan_start: u16,
+    scan_end: u16,
+    dashboard_port: u16,
+    tag_colors: &[TagColor],
+) -> String {
+    let rows = build_rows(alive_ports, apps);
+    let total = rows.len();
+    let plural = if total == 1 { "" } else { "s" };
+
+    let content = if rows.is_empty() {
+        r#"<p class="empty">No active ports found.</p>"#.to_string()
+    } else {
+        let rows_html: String = rows.iter().map(|r| r.html.as_str()).collect();
+        format!("<table>{rows_html}</table>")
+    };
+
+    let categories = extract_categories(apps);
+    let filter_btns = render_filters(&categories);
+    let custom_css = render_custom_css(tag_colors);
 
     format!(
         r#"<!DOCTYPE html>
@@ -113,6 +137,8 @@ pub fn render(
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
 {CSS}
+</style>
+<style id="custom-colors">
 {custom_css}
 </style>
 </head>
@@ -127,7 +153,7 @@ pub fn render(
       </div>
       <div class="nav-right">
         <span class="meta">{scan_start}&ndash;{scan_end}</span>
-        <button class="btn" onclick="location.reload()">
+        <button class="btn" id="refresh-btn" onclick="triggerRefresh()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
         </button>
       </div>
@@ -153,49 +179,44 @@ pub fn render(
     )
 }
 
-/// Returns `(count, html_rows)`.
-fn build_rows(alive_ports: &[u16], apps: &[App]) -> (usize, String) {
-    let mut rows = String::new();
-    let mut count = 0;
+/// Build row data for all ports. Returns individual [`RowData`] entries
+/// so the SSE handler can diff at the row level.
+pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
+    let mut rows = Vec::new();
+    let mut macos_rows = Vec::new();
 
-    let mut macos_rows = String::new();
-    let mut macos_count = 0;
-
-    // Alive ports: registered and unregistered (non-macOS) first
     for &port in alive_ports {
         let app = apps.iter().find(|a| a.port == i64::from(port));
         let known = crate::known_ports::lookup(port);
 
         if let Some(a) = app {
-            count += 1;
-            write_row(&mut rows, port, &a.name, &a.category, a.id, true);
+            rows.push(render_single_row(port, &a.name, &a.category, a.id, true));
         } else if let Some(k) = known {
-            macos_count += 1;
-            write_row(&mut macos_rows, port, k.name, "macos", 0, true);
+            macos_rows.push(render_single_row(port, k.name, "macos", 0, true));
         } else {
-            count += 1;
-            write_row(&mut rows, port, "", "", 0, true);
+            rows.push(render_single_row(port, "", "", 0, true));
         }
     }
 
-    // Registered but down apps
     for app in apps {
         let port = u16::try_from(app.port).unwrap_or(0);
         if alive_ports.contains(&port) {
             continue;
         }
-        count += 1;
-        write_row(&mut rows, port, &app.name, &app.category, app.id, false);
+        rows.push(render_single_row(
+            port,
+            &app.name,
+            &app.category,
+            app.id,
+            false,
+        ));
     }
 
-    // macOS system ports at the bottom
-    count += macos_count;
-    rows.push_str(&macos_rows);
-
-    (count, rows)
+    rows.extend(macos_rows);
+    rows
 }
 
-fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i64, alive: bool) {
+fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: bool) -> RowData {
     let name_esc = html_escape(name);
     let cat_esc = html_escape(category);
 
@@ -223,10 +244,11 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
         String::new()
     };
 
+    let mut html = String::new();
     let _ = write!(
-        rows,
+        html,
         r#"
-        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{cat_esc}"
+        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{cat_esc}" data-alive="{alive}"
             onclick="go({port})" oncontextmenu="inlineEdit(event, this)">
           <td class="c-status"><span class="dot {status}"></span></td>
           <td class="c-name">
@@ -241,6 +263,15 @@ fn write_row(rows: &mut String, port: u16, name: &str, category: &str, app_id: i
           <td class="c-del">{edit_btn}{delete_btn}</td>
         </tr>"#,
     );
+
+    RowData {
+        port,
+        name: name.to_string(),
+        category: category.to_string(),
+        app_id,
+        alive,
+        html,
+    }
 }
 
 /// Expects a pre-escaped category string for the display text.
@@ -663,12 +694,17 @@ const CSS: &str = r"
     background: rgba(255,255,255,0.05);
     color: #999;
   }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .btn.spinning svg { animation: spin 0.6s linear infinite; }
 ";
 
 #[allow(clippy::needless_raw_string_hashes)]
 const SCRIPT: &str = r#"
 <script>
 let editingRow = null;
+let colorMenuTarget = null;
+let pendingRefresh = null;
 
 function go(port) {
   if (editingRow) return;
@@ -679,7 +715,6 @@ function inlineEdit(e, row) {
   e.preventDefault();
   if (editingRow === row) return;
   if (editingRow) cancelEdit();
-
   editingRow = row;
   row.classList.add('editing');
   const nameInput = row.querySelector('[data-field="name"]');
@@ -694,6 +729,10 @@ function cancelEdit() {
   if (!editingRow) return;
   editingRow.classList.remove('editing');
   editingRow = null;
+  if (pendingRefresh) {
+    applyRefresh(pendingRefresh);
+    pendingRefresh = null;
+  }
 }
 
 async function saveEdit(row) {
@@ -715,13 +754,31 @@ async function saveEdit(row) {
       body: JSON.stringify({ name: name || null, port, category: category || 'other' })
     });
   }
+  cancelEdit();
+}
 
-  location.reload();
+function getActiveFilter() {
+  const btn = document.querySelector('.filter.active');
+  if (!btn) return 'all';
+  return btn.dataset.category || 'all';
 }
 
 function filterBy(cat, btn) {
   document.querySelectorAll('.filter').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.row').forEach(row => {
+    if (cat === 'all') {
+      row.style.display = '';
+    } else {
+      const badge = row.querySelector('.badge');
+      const rowCat = badge ? badge.textContent.trim() : '';
+      row.style.display = (rowCat === cat) ? '' : 'none';
+    }
+  });
+}
+
+function reapplyFilter() {
+  const cat = getActiveFilter();
   document.querySelectorAll('.row').forEach(row => {
     if (cat === 'all') {
       row.style.display = '';
@@ -735,17 +792,13 @@ function filterBy(cat, btn) {
 
 async function deleteApp(appId) {
   await fetch(`/api/apps/${appId}`, { method: 'DELETE' });
-  location.reload();
 }
 
 // -- Color picker --
-
 const COLOR_SWATCHES = [
   '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6',
   '#38bdf8', '#8b5cf6', '#ec4899', '#6b7280', '#f5f5f4'
 ];
-
-let colorMenuTarget = null;
 
 function initColorMenu() {
   const menu = document.getElementById('color-menu');
@@ -786,7 +839,6 @@ async function setTagColor(hex) {
     body: JSON.stringify({ color: hex })
   });
   hideColorMenu();
-  location.reload();
 }
 
 async function resetTagColor() {
@@ -795,7 +847,6 @@ async function resetTagColor() {
     method: 'DELETE'
   });
   hideColorMenu();
-  location.reload();
 }
 
 document.addEventListener('keydown', e => {
@@ -810,15 +861,120 @@ document.addEventListener('click', e => {
   if (colorMenuTarget && !menu.contains(e.target)) hideColorMenu();
 });
 
+function triggerRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  fetch('/api/refresh', { method: 'POST' });
+}
+
+// Event delegation for filter clicks (no inline onclick)
+document.querySelector('.filters').addEventListener('click', e => {
+  const btn = e.target.closest('.filter');
+  if (btn) filterBy(btn.dataset.category || 'all', btn);
+});
+
 // Right-click on filter buttons to open color picker
 document.addEventListener('contextmenu', e => {
   const btn = e.target.closest('.filter[data-category]');
-  if (btn) {
-    showColorMenu(e, btn.dataset.category);
+  if (btn) showColorMenu(e, btn.dataset.category);
+});
+
+// -- SSE live updates with row-level diffing --
+function applyRefresh(data) {
+  // Update pill
+  document.querySelector('.pill').textContent = data.pill;
+
+  // Update filter buttons (preserve active state)
+  const activeCat = getActiveFilter();
+  const filtersEl = document.querySelector('.filters');
+  filtersEl.innerHTML = data.filters_html;
+  let newActive = null;
+  filtersEl.querySelectorAll('.filter').forEach(b => {
+    b.classList.remove('active');
+    const bCat = b.dataset.category || 'all';
+    if (bCat === activeCat) newActive = b;
+  });
+  if (!newActive) newActive = filtersEl.querySelector('.filter');
+  if (newActive) newActive.classList.add('active');
+
+  // Update custom tag-color CSS
+  document.getElementById('custom-colors').textContent = data.custom_css;
+
+  // Diff rows
+  const card = document.querySelector('.card');
+  if (data.rows.length === 0) {
+    card.innerHTML = '<p class="empty">No active ports found.</p>';
+    return;
   }
+
+  let table = card.querySelector('table');
+  if (!table) {
+    card.innerHTML = '<table></table>';
+    table = card.querySelector('table');
+  }
+  const container = table.querySelector('tbody') || table;
+
+  // Index current rows by port
+  const currentRows = new Map();
+  container.querySelectorAll('tr[data-port]').forEach(tr => {
+    currentRows.set(tr.dataset.port, tr);
+  });
+
+  const newPorts = new Set();
+
+  // Update or insert rows
+  data.rows.forEach(row => {
+    const key = String(row.port);
+    newPorts.add(key);
+    const existing = currentRows.get(key);
+
+    if (existing) {
+      // Only replace if data actually changed
+      if (existing.dataset.name !== row.name ||
+          existing.dataset.category !== row.category ||
+          existing.dataset.appId !== String(row.app_id) ||
+          existing.dataset.alive !== String(row.alive)) {
+        const temp = document.createElement('tbody');
+        temp.innerHTML = row.html;
+        const newTr = temp.firstElementChild;
+        existing.replaceWith(newTr);
+      }
+    } else {
+      const temp = document.createElement('tbody');
+      temp.innerHTML = row.html;
+      container.appendChild(temp.firstElementChild);
+    }
+  });
+
+  // Remove rows no longer present
+  currentRows.forEach((tr, port) => {
+    if (!newPorts.has(port)) tr.remove();
+  });
+
+  // Reorder to match server order if needed
+  const curOrder = [...container.querySelectorAll('tr[data-port]')].map(t => t.dataset.port);
+  const srvOrder = data.rows.map(r => String(r.port));
+  if (curOrder.join(',') !== srvOrder.join(',')) {
+    srvOrder.forEach(p => {
+      const tr = container.querySelector('tr[data-port="' + p + '"]');
+      if (tr) container.appendChild(tr);
+    });
+  }
+
+  reapplyFilter();
+}
+
+const evtSource = new EventSource('/events');
+evtSource.addEventListener('refresh', (e) => {
+  document.getElementById('refresh-btn').classList.remove('spinning');
+  const data = JSON.parse(e.data);
+  if (editingRow) {
+    pendingRefresh = data;
+    return;
+  }
+  applyRefresh(data);
 });
 
 initColorMenu();
-setTimeout(() => location.reload(), 30000);
 </script>
 "#;
