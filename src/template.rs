@@ -55,16 +55,50 @@ pub fn extract_categories(apps: &[App]) -> Vec<String> {
 }
 
 /// Render filter button HTML. Uses event delegation (no inline onclick).
-pub fn render_filters(categories: &[String]) -> String {
+/// Color dots use the tag's custom color if set.
+pub fn render_filters(categories: &[String], tag_colors: &[TagColor]) -> String {
     let mut html = String::from(r#"<button class="filter active">all</button>"#);
     for cat in categories {
         let cat_esc = html_escape(cat);
+        let dot = color_dot(cat, tag_colors);
         let _ = write!(
             html,
-            r#"<button class="filter" data-category="{cat_esc}">{cat_esc}</button>"#,
+            r#"<button class="filter" data-category="{cat_esc}">{cat_esc}{dot}</button>"#,
         );
     }
     html
+}
+
+/// Built-in default colors for common categories.
+fn default_color(category: &str) -> Option<&'static str> {
+    match category {
+        "frontend" => Some("#38bdf8"),
+        "backend" => Some("#4ade80"),
+        "mcp" => Some("#a855f7"),
+        "macos" => Some("#949494"),
+        _ => None,
+    }
+}
+
+/// Render a small color dot for a category. Uses custom color, then built-in default, then hollow.
+fn color_dot(category: &str, tag_colors: &[TagColor]) -> String {
+    let color = tag_colors
+        .iter()
+        .find(|tc| tc.category == category)
+        .map(|tc| tc.color.as_str())
+        .or_else(|| default_color(category));
+    if let Some(hex) = color {
+        let hex_esc = html_escape(hex);
+        format!(
+            r#"<span class="color-dot" style="background:{hex_esc}" data-category="{cat}"></span>"#,
+            cat = html_escape(category)
+        )
+    } else {
+        format!(
+            r#"<span class="color-dot color-dot-hollow" data-category="{cat}"></span>"#,
+            cat = html_escape(category)
+        )
+    }
 }
 
 /// Render dynamic CSS rules for custom tag colors.
@@ -121,7 +155,7 @@ pub fn render(
     };
 
     let categories = extract_categories(apps);
-    let filter_btns = render_filters(&categories);
+    let filter_btns = render_filters(&categories, tag_colors);
     let custom_css = render_custom_css(tag_colors);
 
     format!(
@@ -171,9 +205,9 @@ pub fn render(
     </div>
   </div>
   <div id="row-menu" style="display:none">
-    <button class="row-menu-item" data-action="edit">Edit</button>
-    <button class="row-menu-item" data-action="delete">Unregister</button>
-    <button class="row-menu-item row-menu-danger" data-action="kill">Kill process</button>
+    <button class="row-menu-item" data-action="edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg> Edit</button>
+    <button class="row-menu-item" data-action="delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Unregister</button>
+    <button class="row-menu-item row-menu-danger" data-action="kill"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v6"/><circle cx="12" cy="14" r="8" fill="none"/></svg> Kill process</button>
   </div>
   <div id="color-menu" style="display:none">
     <div class="color-grid"></div>
@@ -227,7 +261,9 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
     let cat_esc = html_escape(category);
 
     let display_name = if name.is_empty() {
-        format!(r#"<span class="unnamed">{port}</span>"#)
+        format!(
+            r#"<span class="unnamed">port {port}</span><span class="add-label" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))">add details</span>"#
+        )
     } else {
         name_esc.clone()
     };
@@ -409,11 +445,11 @@ const CSS: &str = r"
   }
 
   .row.is-down {
-    opacity: 0.35;
+    opacity: 0.55;
   }
 
   .row.is-down:hover {
-    opacity: 0.55;
+    opacity: 0.75;
   }
 
   td {
@@ -451,11 +487,22 @@ const CSS: &str = r"
   }
 
   .unnamed {
-    color: #3a3a3a;
+    color: #555;
     font-weight: 400;
   }
 
-  .c-badge { width: 100px; }
+  .add-label {
+    color: transparent;
+    font-size: 0.65rem;
+    margin-left: 0.5rem;
+    cursor: pointer;
+    transition: color 0.1s;
+  }
+
+  .row:hover .add-label { color: #555; }
+  .add-label:hover { color: #999 !important; text-decoration: underline; }
+
+  .c-badge { width: 120px; white-space: nowrap; }
 
   .badge {
     display: inline-block;
@@ -528,11 +575,17 @@ const CSS: &str = r"
 
   .c-actions button + button { margin-left: 4px; }
 
-  .row:hover .act-edit { color: #666; }
+  .row:hover .act-edit,
+  .row.menu-active .act-edit { color: #666; }
   .act-edit:hover { color: #ccc !important; }
 
-  .row:hover .act-more { color: #444; }
+  .row:hover .act-more,
+  .row.menu-active .act-more { color: #444; }
   .act-more:hover { color: #999 !important; }
+
+  .row.menu-active {
+    background: rgba(255,255,255,0.04);
+  }
 
   .links {
     display: flex;
@@ -602,6 +655,37 @@ const CSS: &str = r"
     border-color: rgba(255,255,255,0.12);
   }
 
+  .color-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-left: 0.35rem;
+    vertical-align: middle;
+    margin-top: -2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .color-dot::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+  }
+
+  .color-dot-hollow {
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: transparent !important;
+  }
+
+  .filter .color-dot { opacity: 0.5; }
+  .filter:hover .color-dot,
+  .filter.active .color-dot { opacity: 0.7; }
+  .color-dot:hover { opacity: 1 !important; }
+
+
   .filter[data-category='frontend'] { border-color: rgba(56, 189, 248, 0.2); }
   .filter[data-category='frontend'].active { background: rgba(56, 189, 248, 0.12); color: rgba(56, 189, 248, 0.8); border-color: rgba(56, 189, 248, 0.3); }
 
@@ -669,6 +753,11 @@ const CSS: &str = r"
     cursor: pointer;
     border-radius: 4px;
     transition: all 0.1s;
+  }
+
+  .row-menu-item svg {
+    vertical-align: -2px;
+    margin-right: 0.3rem;
   }
 
   .row-menu-item:hover {
@@ -845,7 +934,9 @@ function showRowMenu(e, row) {
   e.preventDefault();
   e.stopPropagation();
   if (editingRow) cancelEdit();
+  if (rowMenuTarget) rowMenuTarget.classList.remove('menu-active');
   rowMenuTarget = row;
+  row.classList.add('menu-active');
 
   const menu = document.getElementById('row-menu');
   const port = row.dataset.port;
@@ -867,6 +958,7 @@ function showRowMenu(e, row) {
 
 function hideRowMenu() {
   document.getElementById('row-menu').style.display = 'none';
+  if (rowMenuTarget) rowMenuTarget.classList.remove('menu-active');
   rowMenuTarget = null;
 }
 
@@ -958,16 +1050,22 @@ function triggerRefresh() {
   fetch('/api/refresh', { method: 'POST' });
 }
 
-// Event delegation for filter clicks (no inline onclick)
+// Event delegation for filter clicks — color dot opens picker, body filters
 document.querySelector('.filters').addEventListener('click', e => {
+  const dot = e.target.closest('.color-dot');
+  if (dot) {
+    e.stopPropagation();
+    showColorMenu(e, dot.dataset.category);
+    return;
+  }
   const btn = e.target.closest('.filter');
   if (btn) filterBy(btn.dataset.category || 'all', btn);
 });
 
-// Right-click on filter buttons to open color picker
+// Right-click on filter buttons as shortcut to color picker
 document.addEventListener('contextmenu', e => {
-  const btn = e.target.closest('.filter[data-category]');
-  if (btn) showColorMenu(e, btn.dataset.category);
+  const filterBtn = e.target.closest('.filter[data-category]');
+  if (filterBtn) showColorMenu(e, filterBtn.dataset.category);
 });
 
 // -- SSE live updates with row-level diffing --

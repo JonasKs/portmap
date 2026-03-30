@@ -111,7 +111,7 @@ pub async fn scanner_loop(
         let total = rows.len();
         let plural = if total == 1 { "" } else { "s" };
         let categories = template::extract_categories(&apps);
-        let filters_html = template::render_filters(&categories);
+        let filters_html = template::render_filters(&categories, &tag_colors);
         let custom_css = template::render_custom_css(&tag_colors);
 
         let payload = serde_json::json!({
