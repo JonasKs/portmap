@@ -191,16 +191,29 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
     let apps = portmap::db::list_apps(&db)
         .await
         .expect("Failed to list apps");
-    let alive = portmap::scanner::scan_ports(1000, 9999, 0).await;
+    let mut alive = portmap::scanner::scan_ports(1000, 9999, 0).await;
+    let container_ports = portmap::container::discover().await;
+
+    // Add container ports that TCP scan might have missed
+    for cp in &container_ports {
+        if !alive.contains(&cp.port) {
+            alive.push(cp.port);
+        }
+    }
+    alive.sort_unstable();
 
     if apps.is_empty() && alive.is_empty() {
         println!("No ports found.");
         return;
     }
 
-    // Merge registered apps and unregistered open ports, sorted by port
+    let container_map: std::collections::HashMap<u16, &portmap::container::ContainerPort> =
+        container_ports.iter().map(|cp| (cp.port, cp)).collect();
+
+    // Merge registered apps, container ports, and unregistered open ports
+    // (name, port, category, source, status)
     let mut registered_ports: std::collections::HashSet<u16> = std::collections::HashSet::new();
-    let mut rows: Vec<(String, u16, String, &str)> = Vec::new();
+    let mut rows: Vec<(String, u16, String, String, &str)> = Vec::new();
 
     // Portmap itself at the top
     let pm_status = if alive.contains(&dashboard_port) {
@@ -212,6 +225,7 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         "portmap".to_string(),
         dashboard_port,
         "portmap".to_string(),
+        String::new(),
         pm_status,
     ));
 
@@ -223,8 +237,11 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         } else {
             app.name.clone()
         };
+        let source = container_map
+            .get(&port)
+            .map_or(String::new(), |cp| cp.source.clone());
         let status = if alive.contains(&port) { "up" } else { "down" };
-        rows.push((name, port, app.category.clone(), status));
+        rows.push((name, port, app.category.clone(), source, status));
     }
 
     // Sort registered rows (skip portmap at index 0) by port
@@ -234,9 +251,15 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         if registered_ports.contains(&port) || port == dashboard_port {
             continue;
         }
-        let name =
-            portmap::known_ports::lookup(port).map_or("-".to_string(), |k| k.name.to_string());
-        rows.push((name, port, String::new(), "up"));
+        let (name, category) = if let Some(cp) = container_map.get(&port) {
+            (cp.container_name.clone(), cp.source.clone())
+        } else {
+            (
+                portmap::known_ports::lookup(port).map_or("-".to_string(), |k| k.name.to_string()),
+                String::new(),
+            )
+        };
+        rows.push((name, port, category, String::new(), "up"));
     }
 
     let w_name = std::cmp::max(rows.iter().map(|r| r.0.len()).max().unwrap_or(4), 4);
@@ -246,8 +269,12 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
         "{:<6} {:<w_name$}  {:<w_cat$}  STATUS",
         "PORT", "NAME", "CATEGORY"
     );
-    for (name, port, category, status) in &rows {
-        println!("{port:<6} {name:<w_name$}  {category:<w_cat$}  {status}");
+    for (name, port, category, source, status) in &rows {
+        if source.is_empty() {
+            println!("{port:<6} {name:<w_name$}  {category:<w_cat$}  {status}");
+        } else {
+            println!("{port:<6} {name:<w_name$}  {category:<w_cat$}  {status} ({source})");
+        }
     }
 }
 
