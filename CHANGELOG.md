@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/JonasKs/portmap/compare/portmap-v0.5.1...portmap-v0.6.0) (2026-03-31)
+
+
+### Features
+
+* adaptive scanning, scan status SSE, and UI polish ([5143907](https://github.com/JonasKs/portmap/commit/51439078009ffd47e984d28400ddc784defc1e79))
+
+
+### Bug Fixes
+
+* reduce scan batch size to prevent false negatives ([173ad47](https://github.com/JonasKs/portmap/commit/173ad4751b838dc78547687edb37bc8d58347216))
+
 ## [0.5.1](https://github.com/JonasKs/portmap/compare/portmap-v0.5.0...portmap-v0.5.1) (2026-03-30)
 
 
