@@ -1,11 +1,17 @@
-# portmap
+<h1 align="center">
+  ◎ portmap
+</h1>
 
-> Map names to localhost ports. Made for agents and humans.
+<p align="center">
+  <em>Map names to localhost ports. Made for agents and humans.</em>
+</p>
 
-A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/portless) — discover and manage what's running on your machine. Unlike Portless, portmap doesn't hijack your localhost with subdomain routing or break OAuth flows. It simply scans your ports, lets you name them, and gives you a clean dashboard, CLI and API.  
+A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/portless) — discover and manage what's running on your machine. Unlike Portless, portmap doesn't hijack your localhost with subdomain routing or break OAuth flows. It simply scans your ports, lets you name them, and gives you a clean dashboard, CLI and API.
 Agents can use the CLI, or `curl -H "Accept: text/markdown" http://localhost:1337` to get all the information and instructions they need.
 
-![portmap dashboard](screenshot.png)
+<p align="center">
+  <img src="screenshot.png" alt="portmap dashboard" />
+</p>
 
 ## Install
 
