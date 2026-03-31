@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use portmap::AppState;
+use portmap::config::{self, Config};
 use tracing::info;
 
 #[derive(Parser)]
@@ -9,13 +10,13 @@ use tracing::info;
     version
 )]
 struct Cli {
-    /// Database file path
-    #[arg(short, long, default_value = "~/.portmap.db", global = true)]
+    /// Database file path (default: ~/.config/portmap/portmap.db)
+    #[arg(short, long, default_value = config::DEFAULT_DB_SENTINEL, global = true)]
     database: String,
 
     /// Port for the dashboard server
-    #[arg(long, default_value = "1337", global = true)]
-    listen: u16,
+    #[arg(long, global = true)]
+    listen: Option<u16>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -26,12 +27,12 @@ enum Command {
     /// Start the dashboard server (default if no command given)
     Serve {
         /// Port range start (inclusive)
-        #[arg(long, default_value = "1000")]
-        scan_start: u16,
+        #[arg(long)]
+        scan_start: Option<u16>,
 
         /// Port range end (inclusive)
-        #[arg(long, default_value = "9999")]
-        scan_end: u16,
+        #[arg(long)]
+        scan_end: Option<u16>,
     },
 
     /// List all ports (registered apps + open ports)
@@ -102,7 +103,9 @@ async fn main() {
         .init();
 
     let cli = Cli::parse();
-    let db_path = shellexpand(&cli.database);
+    let cfg = config::load();
+    let db_path = config::resolve_db_path(&cli.database);
+    let listen = cli.listen.unwrap_or_else(|| cfg.listen());
 
     match cli.command {
         None | Some(Command::Serve { .. }) => {
@@ -110,12 +113,15 @@ async fn main() {
                 Some(Command::Serve {
                     scan_start,
                     scan_end,
-                }) => (*scan_start, *scan_end),
-                _ => (1000, 9999),
+                }) => (
+                    scan_start.unwrap_or_else(|| cfg.scan_start()),
+                    scan_end.unwrap_or_else(|| cfg.scan_end()),
+                ),
+                _ => (cfg.scan_start(), cfg.scan_end()),
             };
-            cmd_serve(&db_path, cli.listen, scan_start, scan_end).await;
+            cmd_serve(&db_path, listen, scan_start, scan_end).await;
         }
-        Some(Command::List) => cmd_list(&db_path, cli.listen).await,
+        Some(Command::List) => cmd_list(&db_path, listen).await,
         Some(Command::Add {
             name,
             port,
@@ -129,9 +135,9 @@ async fn main() {
             category,
         }) => cmd_update(&db_path, &target, name, port, category).await,
         Some(Command::Kill { target }) => cmd_kill(&db_path, &target).await,
-        Some(Command::Install) => cmd_install(cli.listen),
-        Some(Command::Uninstall) => cmd_uninstall(&cli.database),
-        Some(Command::Status) => cmd_status(cli.listen).await,
+        Some(Command::Install) => cmd_install(&cfg, listen),
+        Some(Command::Uninstall) => cmd_uninstall(&db_path),
+        Some(Command::Status) => cmd_status(listen).await,
     }
 }
 
@@ -439,7 +445,7 @@ fn is_homebrew_install() -> bool {
         .is_some_and(|p| p.display().to_string().contains("/Cellar/"))
 }
 
-fn cmd_install(port: u16) {
+fn cmd_install(cfg: &Config, port: u16) {
     use std::process::Command as Cmd;
 
     if is_homebrew_install() {
@@ -453,6 +459,8 @@ fn cmd_install(port: u16) {
 
     let exe = std::env::current_exe().expect("Failed to get binary path");
     let exe_str = exe.display().to_string();
+    let scan_start = cfg.scan_start();
+    let scan_end = cfg.scan_end();
 
     if cfg!(target_os = "macos") {
         let plist_path = shellexpand("~/Library/LaunchAgents/dev.portmap.plist");
@@ -479,6 +487,10 @@ fn cmd_install(port: u16) {
         <string>serve</string>
         <string>--listen</string>
         <string>{port}</string>
+        <string>--scan-start</string>
+        <string>{scan_start}</string>
+        <string>--scan-end</string>
+        <string>{scan_end}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -521,7 +533,7 @@ fn cmd_install(port: u16) {
         let _ = std::fs::create_dir_all(&service_dir);
 
         let unit = format!(
-            "[Unit]\nDescription=portmap\n\n[Service]\nExecStart={exe_str} serve --listen {port}\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
+            "[Unit]\nDescription=portmap\n\n[Service]\nExecStart={exe_str} serve --listen {port} --scan-start {scan_start} --scan-end {scan_end}\nRestart=always\n\n[Install]\nWantedBy=default.target\n"
         );
 
         let service_path = format!("{service_dir}/portmap.service");
@@ -544,7 +556,7 @@ fn cmd_install(port: u16) {
     }
 }
 
-fn cmd_uninstall(db_flag: &str) {
+fn cmd_uninstall(db_path: &str) {
     use std::process::Command as Cmd;
 
     if is_homebrew_install() {
@@ -577,10 +589,19 @@ fn cmd_uninstall(db_flag: &str) {
         }
     }
 
-    let db_path = shellexpand(db_flag);
-    if std::fs::remove_file(&db_path).is_ok() {
+    if std::fs::remove_file(db_path).is_ok() {
         println!("Removed database.");
     }
+
+    // Also remove old database location if it exists.
+    let old_db = shellexpand("~/.portmap.db");
+    if std::fs::remove_file(&old_db).is_ok() {
+        println!("Removed old database.");
+    }
+
+    // Remove config directory if empty.
+    let config_dir = config::config_dir();
+    let _ = std::fs::remove_dir(&config_dir);
 
     println!("portmap has been uninstalled.");
 }

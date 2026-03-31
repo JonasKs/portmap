@@ -69,9 +69,28 @@ portmap --version
 
 > **Homebrew users:** use `brew services start/stop portmap` instead of `portmap install/uninstall`.
 
+## Configuration
+
+portmap reads `~/.config/portmap/config.toml` on startup. All fields are optional:
+
+```toml
+listen = 1337        # dashboard port
+scan_start = 1000    # port scan range start (inclusive)
+scan_end = 9999      # port scan range end (inclusive)
+```
+
+CLI flags override config file values. For example, to scan the full port range:
+
+```toml
+scan_start = 1000
+scan_end = 65535
+```
+
+The database is stored at `~/.config/portmap/portmap.db`. If you're upgrading from an older version that used `~/.portmap.db`, portmap will automatically migrate it on first run.
+
 ## Features
 
-- **Port scanning** — scans ports 1000–9999 on IPv4 and IPv6. Known ports are checked every 10s. Full discovery runs every 60s while the dashboard is open, or every 5 minutes when no one is watching.
+- **Port scanning** — scans ports 1000–9999 by default (configurable via `config.toml`) on IPv4 and IPv6. Known ports are checked every 10s. Full discovery runs every 60s while the dashboard is open, or every 5 minutes when no one is watching.
 - **Live dashboard** — real-time updates via SSE
 - **Name, tag & kill ports** — right-click to edit, change colors, or kill processes
 - **Agent-friendly** — `Accept: text/markdown` or `/markdown` for LLM-ready output

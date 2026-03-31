@@ -13,6 +13,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
+toml = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 async-stream = "0.3.6"
 futures-util = "0.3.32"
