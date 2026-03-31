@@ -527,19 +527,9 @@ const CSS: &str = r"
     vertical-align: middle;
   }
 
-  .source-pill {
+  .source-pill, .offline-pill {
     font-size: 0.6rem;
     color: #555;
-  }
-
-  .offline-pill {
-    font-size: 0.6rem;
-    color: #666;
-    background: rgba(255,255,255,0.04);
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-    border: 1px solid rgba(255,255,255,0.06);
-    margin-left: 0.3rem;
   }
 
   td {
