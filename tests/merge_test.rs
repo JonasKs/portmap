@@ -30,8 +30,8 @@ fn test_merge_container_only() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].port, 8080);
     assert_eq!(rows[0].name, "my-nginx");
-    assert_eq!(rows[0].category, "docker"); // source as category
-    assert_eq!(rows[0].source, ""); // no source pill (category is already docker)
+    assert_eq!(rows[0].category, ""); // no user category
+    assert_eq!(rows[0].source, "docker"); // source in its own column
     assert!(rows[0].alive);
 }
 
@@ -66,8 +66,8 @@ fn test_container_with_no_app_uses_container_name() {
 
     let rows = build_rows(&alive, &apps, &containers);
     assert_eq!(rows[0].name, "redis-cache");
-    assert_eq!(rows[0].source, ""); // no source pill when category is already the source
-    assert_eq!(rows[0].category, "podman"); // source used as category fallback
+    assert_eq!(rows[0].source, "podman"); // source in its own column
+    assert_eq!(rows[0].category, ""); // no user category
 }
 
 #[test]
@@ -127,15 +127,15 @@ fn test_registered_app_with_container_shows_source_hint() {
 }
 
 #[test]
-fn test_container_only_no_double_source() {
-    // Unregistered container port: category=source, source="" (no double badge)
+fn test_container_only_no_category() {
+    // Unregistered container port: empty category, source in its own field
     let alive = vec![8080];
     let apps = vec![];
     let containers = vec![container(8080, "nginx", "docker")];
 
     let rows = build_rows(&alive, &apps, &containers);
-    assert_eq!(rows[0].category, "docker"); // source as category
-    assert_eq!(rows[0].source, ""); // no source pill (would be duplicate)
+    assert_eq!(rows[0].category, ""); // no user category
+    assert_eq!(rows[0].source, "docker"); // source column
 }
 
 #[test]

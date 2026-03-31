@@ -44,25 +44,16 @@ pub struct RowData {
     pub html: String,
 }
 
-/// Extract unique, sorted categories from apps and container ports.
-/// Container sources (docker/podman) only appear as filters when they serve
-/// as the fallback primary badge (i.e., the port has no registered app).
-pub fn extract_categories(
-    apps: &[App],
-    container_ports: &[crate::container::ContainerPort],
-) -> Vec<String> {
-    let mut cats: std::collections::BTreeSet<&str> = apps
-        .iter()
+/// Extract unique, sorted user-defined categories from apps.
+/// Source (docker/podman/macos) is not a category — it has its own column.
+pub fn extract_categories(apps: &[App]) -> Vec<String> {
+    apps.iter()
         .map(|a| a.category.as_str())
         .filter(|c| !c.is_empty())
-        .collect();
-    // Only add source as a filter if the container port is unregistered
-    for cp in container_ports {
-        if !cp.source.is_empty() && !apps.iter().any(|a| a.port == i64::from(cp.port)) {
-            cats.insert(&cp.source);
-        }
-    }
-    cats.into_iter().map(String::from).collect()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 /// Render filter button HTML. Uses event delegation (no inline onclick).
@@ -166,7 +157,7 @@ pub fn render(
         format!("<table>{rows_html}</table>")
     };
 
-    let categories = extract_categories(apps, container_ports);
+    let categories = extract_categories(apps);
     let filter_btns = render_filters(&categories, tag_colors);
     let custom_css = render_custom_css(tag_colors);
 
@@ -265,15 +256,14 @@ pub fn build_rows(
                 &source,
             ));
         } else if let Some(cp) = container {
-            // Container port, not registered — use container name, source as category
-            // Don't set source pill since the category already shows the source
+            // Container port, not registered — no category, source in source column
             alive_rows.push(render_single_row(
                 port,
                 &cp.container_name,
-                &cp.source,
+                "",
                 0,
                 true,
-                "",
+                &cp.source,
             ));
         } else if let Some(k) = known {
             known_rows.push(render_single_row(port, k.name, "macos", 0, true, ""));
@@ -356,9 +346,10 @@ fn render_single_row(
             <input class="inline-input" data-field="name" value="{name_val}" placeholder="name" style="display:none" />
           </td>
           <td class="c-badge">
-            <span class="c-badge-text">{badge}{source_pill}{offline_pill}</span>
+            <span class="c-badge-text">{badge}</span>
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
+          <td class="c-source">{source_pill}{offline_pill}</td>
           <td class="c-port">{port}</td>
           <td class="c-actions"><button class="act-edit" onclick="event.stopPropagation();inlineEdit(event, this.closest('.row'))" title="Edit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button><button class="act-more" onclick="event.stopPropagation();showRowMenu(event, this.closest('.row'))" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button></td>
         </tr>"#,
@@ -529,12 +520,16 @@ const CSS: &str = r"
     opacity: 0.85;
   }
 
-  .source-pill {
-    font-size: 0.55rem;
+  .c-source {
+    width: 60px;
+    font-size: 0.6rem;
     color: #555;
-    padding: 0.05rem 0.3rem;
-    border-radius: 3px;
-    margin-left: 0.3rem;
+    vertical-align: middle;
+  }
+
+  .source-pill {
+    font-size: 0.6rem;
+    color: #555;
   }
 
   .offline-pill {
