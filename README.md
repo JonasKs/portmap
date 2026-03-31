@@ -2,7 +2,8 @@
 
 > Map names to localhost ports. Made for agents and humans.
 
-A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/portless) — discover and manage what's running on your machine. Unlike Portless, portmap doesn't hijack your localhost with subdomain routing or break OAuth flows. It simply scans your ports, lets you name them, and gives you a clean dashboard + API. Agents can use the CLI, or `curl -H "Accept: text/markdown" http://localhost:1337` to get all the information and instructions they need.
+A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/portless) — discover and manage what's running on your machine. Unlike Portless, portmap doesn't hijack your localhost with subdomain routing or break OAuth flows. It simply scans your ports, lets you name them, and gives you a clean dashboard, CLI and API.  
+Agents can use the CLI, or `curl -H "Accept: text/markdown" http://localhost:1337` to get all the information and instructions they need.
 
 ![portmap dashboard](screenshot.png)
 
@@ -11,29 +12,36 @@ A lightweight alternative to [Vercel's Portless](https://github.com/vercel-labs/
 ### Homebrew (macOS & Linux)
 
 ```bash
+brew update 
 brew install jonasks/tap/portmap
-brew services start portmap          # start now + launch on login
+brew services start portmap         # start now + auto-start on login
+# or: portmap serve                 # one-time foreground run
 ```
-Bookmark the dashboard at [localhost:1337](http://localhost:1337), or use the CLI:
-
+Bookmark the dashboard at [localhost:1337](http://localhost:1337), or use the `portmap` CLI:
+ 
 ```bash
 ❯ portmap list
-ID     NAME                 PORT     CATEGORY     STATUS
-2      app                  9900     frontend     up
-3      vibe-frontend        9901     frontend     down
-4      mcp-server           9951     mcp          up
-5      email                9952     mcp          up
-6      api                  9953     backend      up
-7      billing              9954     backend      down
-8      azure-mcp            9955     mcp          up
-1      azure-fastapi        9958     backend      up
+PORT   NAME               CATEGORY  STATUS
+1337   portmap            portmap   down
+9900   my vite app        frontend  up
+9951   website            frontend  up
+9952   azure-mcp          mcp       up
+9953   logfire-http-mcp   mcp       up
+9954   vibber-mcp         mcp       up
+9955   api                backend   up
+9956   google-mcp         backend   down
+9957   billing            backend   up
+5000   AirPlay Receiver             up
+7000   AirPlay Streaming            up
+9958   -                            up
 ```
 
 ### From source
 
 ```bash
 cargo install --path .
-portmap install                      # start now + launch on login
+portmap install                      # start now + auto-start on login
+# or: portmap serve                  # one-time foreground run
 ```
 
 
@@ -57,20 +65,15 @@ portmap --version
 
 ## Features
 
-- **Port scanning** — discovers all active localhost services (IPv4 + IPv6)
-- **Live dashboard** — SSE-powered updates, no page reloads
-- **Name & tag ports** — click to navigate, pencil icon or right-click to edit
-- **Kill from dashboard** — right-click a row to kill the process or unregister it
-- **Optional names** — tag a port with just a category, name is not required
-- **Category badges** — tag services as frontend, backend, mcp, or anything
-- **Custom tag colors** — right-click filter buttons to pick a color per category
-- **Filter by tag** — quickly filter the dashboard
-- **Agent-friendly** — `Accept: text/markdown` or `/markdown` returns clean markdown with full API docs
-- **JSON API** — CRUD for registered apps at `/api/apps`, tag colors at `/api/tag-colors`
-- **SQLite persistence** — survives restarts, stored at `~/.portmap.db`
-- **Auto-migration** — DB schema upgrades automatically on new versions
+- **Port scanning** — scans ports 1000–9999 on IPv4 and IPv6. Known ports are checked every 10s. Full discovery runs every 60s while the dashboard is open, or every 5 minutes when no one is watching.
+- **Live dashboard** — real-time updates via SSE
+- **Name, tag & kill ports** — right-click to edit, change colors, or kill processes
+- **Agent-friendly** — `Accept: text/markdown` or `/markdown` for LLM-ready output
+- **JSON API** — `/api/ports` for all port data
+- **CLI** - `portmap`
+- **SQLite persistence** — survives restarts, auto-migrates on upgrade
 - **Tiny binary** — single static binary, no runtime dependencies
-- **Startup service** — `portmap install` registers launchd (macOS) or systemd (Linux)
+- **Startup service** — `portmap install` for launchd (macOS) or systemd (Linux)
 
 ## Claude Code skills
 
