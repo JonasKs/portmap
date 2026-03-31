@@ -45,6 +45,8 @@ pub struct RowData {
 }
 
 /// Extract unique, sorted categories from apps and container ports.
+/// Container sources (docker/podman) only appear as filters when they serve
+/// as the fallback primary badge (i.e., the port has no registered app).
 pub fn extract_categories(
     apps: &[App],
     container_ports: &[crate::container::ContainerPort],
@@ -54,8 +56,9 @@ pub fn extract_categories(
         .map(|a| a.category.as_str())
         .filter(|c| !c.is_empty())
         .collect();
+    // Only add source as a filter if the container port is unregistered
     for cp in container_ports {
-        if !cp.source.is_empty() {
+        if !cp.source.is_empty() && !apps.iter().any(|a| a.port == i64::from(cp.port)) {
             cats.insert(&cp.source);
         }
     }
@@ -353,7 +356,7 @@ fn render_single_row(
             <input class="inline-input" data-field="name" value="{name_val}" placeholder="name" style="display:none" />
           </td>
           <td class="c-badge">
-            <span class="c-badge-text">{badge}{offline_pill}{source_pill}</span>
+            <span class="c-badge-text">{badge}{source_pill}{offline_pill}</span>
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
@@ -526,7 +529,15 @@ const CSS: &str = r"
     opacity: 0.85;
   }
 
-  .source-pill, .offline-pill {
+  .source-pill {
+    font-size: 0.55rem;
+    color: #555;
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    margin-left: 0.3rem;
+  }
+
+  .offline-pill {
     font-size: 0.6rem;
     color: #666;
     background: rgba(255,255,255,0.04);
