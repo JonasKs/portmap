@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/JonasKs/portmap/compare/portmap-v0.6.0...portmap-v0.6.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* trigger release for scanning and UI improvements ([3c180e4](https://github.com/JonasKs/portmap/commit/3c180e42ced4a79235671a6f4bd4b641dee500fb))
+
 ## [0.6.0](https://github.com/JonasKs/portmap/compare/portmap-v0.5.1...portmap-v0.6.0) (2026-03-31)
 
 
