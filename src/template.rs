@@ -40,18 +40,26 @@ pub struct RowData {
     pub category: String,
     pub app_id: i64,
     pub alive: bool,
+    pub source: String,
     pub html: String,
 }
 
-/// Extract unique, sorted categories from the app list.
-pub fn extract_categories(apps: &[App]) -> Vec<String> {
-    apps.iter()
+/// Extract unique, sorted categories from apps and container ports.
+pub fn extract_categories(
+    apps: &[App],
+    container_ports: &[crate::container::ContainerPort],
+) -> Vec<String> {
+    let mut cats: std::collections::BTreeSet<&str> = apps
+        .iter()
         .map(|a| a.category.as_str())
         .filter(|c| !c.is_empty())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .map(String::from)
-        .collect()
+        .collect();
+    for cp in container_ports {
+        if !cp.source.is_empty() {
+            cats.insert(&cp.source);
+        }
+    }
+    cats.into_iter().map(String::from).collect()
 }
 
 /// Render filter button HTML. Uses event delegation (no inline onclick).
@@ -142,8 +150,9 @@ pub fn render(
     scan_end: u16,
     dashboard_port: u16,
     tag_colors: &[TagColor],
+    container_ports: &[crate::container::ContainerPort],
 ) -> String {
-    let rows = build_rows(alive_ports, apps);
+    let rows = build_rows(alive_ports, apps, container_ports);
     let total = rows.len();
     let plural = if total == 1 { "" } else { "s" };
 
@@ -154,7 +163,7 @@ pub fn render(
         format!("<table>{rows_html}</table>")
     };
 
-    let categories = extract_categories(apps);
+    let categories = extract_categories(apps, container_ports);
     let filter_btns = render_filters(&categories, tag_colors);
     let custom_css = render_custom_css(tag_colors);
 
@@ -220,7 +229,17 @@ pub fn render(
 
 /// Build row data for all ports. Returns individual [`RowData`] entries
 /// so the SSE handler can diff at the row level.
-pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
+pub fn build_rows(
+    alive_ports: &[u16],
+    apps: &[App],
+    container_ports: &[crate::container::ContainerPort],
+) -> Vec<RowData> {
+    use std::collections::HashMap;
+
+    // Index container ports by port number for O(1) lookup
+    let container_map: HashMap<u16, &crate::container::ContainerPort> =
+        container_ports.iter().map(|cp| (cp.port, cp)).collect();
+
     let mut alive_rows = Vec::new();
     let mut known_rows = Vec::new();
     let mut down_rows = Vec::new();
@@ -229,13 +248,34 @@ pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
     for &port in alive_ports {
         let app = apps.iter().find(|a| a.port == i64::from(port));
         let known = crate::known_ports::lookup(port);
+        let container = container_map.get(&port);
+        let source = container.map_or(String::new(), |c| c.source.clone());
 
         if let Some(a) = app {
-            alive_rows.push(render_single_row(port, &a.name, &a.category, a.id, true));
+            // Registered app — use app name/category, add source hint
+            alive_rows.push(render_single_row(
+                port,
+                &a.name,
+                &a.category,
+                a.id,
+                true,
+                &source,
+            ));
+        } else if let Some(cp) = container {
+            // Container port, not registered — use container name, source as category
+            // Don't set source pill since the category already shows the source
+            alive_rows.push(render_single_row(
+                port,
+                &cp.container_name,
+                &cp.source,
+                0,
+                true,
+                "",
+            ));
         } else if let Some(k) = known {
-            known_rows.push(render_single_row(port, k.name, "macos", 0, true));
+            known_rows.push(render_single_row(port, k.name, "macos", 0, true, ""));
         } else {
-            alive_rows.push(render_single_row(port, "", "", 0, true));
+            alive_rows.push(render_single_row(port, "", "", 0, true, ""));
         }
     }
 
@@ -251,6 +291,7 @@ pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
             &app.category,
             app.id,
             false,
+            "",
         ));
     }
 
@@ -260,7 +301,14 @@ pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
     alive_rows
 }
 
-fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: bool) -> RowData {
+fn render_single_row(
+    port: u16,
+    name: &str,
+    category: &str,
+    app_id: i64,
+    alive: bool,
+    source: &str,
+) -> RowData {
     let name_esc = html_escape(name);
     let cat_esc = html_escape(category);
 
@@ -286,11 +334,18 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
         name_esc.clone()
     };
 
+    let source_esc = html_escape(source);
+    let source_pill = if source.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<span class="source-pill">{source_esc}</span>"#)
+    };
+
     let mut html = String::new();
     let _ = write!(
         html,
         r#"
-        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{cat_esc}" data-alive="{alive}"
+        <tr class="{row_class}" data-port="{port}" data-app-id="{app_id}" data-name="{name_val}" data-category="{cat_esc}" data-alive="{alive}" data-source="{source_esc}"
             onclick="go({port})" oncontextmenu="showRowMenu(event, this)">
           <td class="c-status"><span class="dot {status}"></span></td>
           <td class="c-name">
@@ -298,7 +353,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
             <input class="inline-input" data-field="name" value="{name_val}" placeholder="name" style="display:none" />
           </td>
           <td class="c-badge">
-            <span class="c-badge-text">{offline_pill}{badge}</span>
+            <span class="c-badge-text">{badge}{offline_pill}{source_pill}</span>
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
@@ -312,6 +367,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
         category: category.to_string(),
         app_id,
         alive,
+        source: source.to_string(),
         html,
     }
 }
@@ -470,14 +526,14 @@ const CSS: &str = r"
     opacity: 0.85;
   }
 
-  .offline-pill {
+  .source-pill, .offline-pill {
     font-size: 0.6rem;
     color: #666;
     background: rgba(255,255,255,0.04);
     padding: 0.1rem 0.35rem;
     border-radius: 3px;
     border: 1px solid rgba(255,255,255,0.06);
-    margin-right: 0.3rem;
+    margin-left: 0.3rem;
   }
 
   td {
@@ -969,9 +1025,11 @@ function showRowMenu(e, row) {
   const alive = row.dataset.alive === 'true';
 
   // Show/hide items based on context
+  const source = row.dataset.source || '';
+  const isContainer = source === 'docker' || source === 'podman';
   const killItem = menu.querySelector('[data-action="kill"]');
   const delItem = menu.querySelector('[data-action="delete"]');
-  killItem.style.display = alive ? '' : 'none';
+  killItem.style.display = (alive && !isContainer) ? '' : 'none';
   delItem.style.display = appId > 0 ? '' : 'none';
 
   menu.style.display = 'block';
@@ -1163,7 +1221,8 @@ function applyRefresh(data) {
       if (existing.dataset.name !== row.name ||
           existing.dataset.category !== row.category ||
           existing.dataset.appId !== String(row.app_id) ||
-          existing.dataset.alive !== String(row.alive)) {
+          existing.dataset.alive !== String(row.alive) ||
+          existing.dataset.source !== (row.source || '')) {
         const temp = document.createElement('tbody');
         temp.innerHTML = row.html;
         const newTr = temp.firstElementChild;

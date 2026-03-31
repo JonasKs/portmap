@@ -1,3 +1,4 @@
+pub mod container;
 pub mod db;
 pub mod known_ports;
 pub mod scanner;
@@ -47,6 +48,8 @@ struct PortInfo {
     category: Option<String>,
     registered: bool,
     alive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -116,11 +119,21 @@ fn signal_scan_end(state: &AppState) {
 async fn publish_scan(state: &AppState, alive: &[u16]) {
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
     let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
+    let container_ports = container::discover().await;
 
-    let rows = template::build_rows(alive, &apps);
+    // Merge container ports into alive list
+    let mut merged_alive = alive.to_vec();
+    for cp in &container_ports {
+        if !merged_alive.contains(&cp.port) && cp.port != state.dashboard_port {
+            merged_alive.push(cp.port);
+        }
+    }
+    merged_alive.sort_unstable();
+
+    let rows = template::build_rows(&merged_alive, &apps, &container_ports);
     let total = rows.len();
     let plural = if total == 1 { "" } else { "s" };
-    let categories = template::extract_categories(&apps);
+    let categories = template::extract_categories(&apps, &container_ports);
     let filters_html = template::render_filters(&categories, &tag_colors);
     let custom_css = template::render_custom_css(&tag_colors);
 
@@ -159,6 +172,7 @@ pub async fn scanner_loop(
     let mut forced = false;
     let mut tick: u32 = 0;
     let mut discovered_ports: Vec<u16> = Vec::new();
+    let mut cached_container_ports: Vec<container::ContainerPort> = Vec::new();
 
     loop {
         let active = sse_clients.load(Ordering::Relaxed) > 0;
@@ -181,7 +195,7 @@ pub async fn scanner_loop(
         if is_full_scan {
             let _ = scan_active_tx.send(true);
         }
-        let alive = if is_full_scan {
+        let mut alive = if is_full_scan {
             let full = scan_ports(scan_start, scan_end, dashboard_port).await;
             discovered_ports.clone_from(&full);
             full
@@ -201,10 +215,22 @@ pub async fn scanner_loop(
             scanner::probe_ports(&check_ports, dashboard_port).await
         };
 
-        let rows = template::build_rows(&alive, &apps);
+        // Container discovery on full scans, cached for quick probes
+        if is_full_scan {
+            cached_container_ports = container::discover().await;
+        }
+        // Add container ports that the TCP scan might have missed
+        for cp in &cached_container_ports {
+            if !alive.contains(&cp.port) && cp.port != dashboard_port {
+                alive.push(cp.port);
+            }
+        }
+        alive.sort_unstable();
+
+        let rows = template::build_rows(&alive, &apps, &cached_container_ports);
         let total = rows.len();
         let plural = if total == 1 { "" } else { "s" };
-        let categories = template::extract_categories(&apps);
+        let categories = template::extract_categories(&apps, &cached_container_ports);
         let filters_html = template::render_filters(&categories, &tag_colors);
         let custom_css = template::render_custom_css(&tag_colors);
 
@@ -243,11 +269,16 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
     signal_scan_start(&state);
     let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
+    let container_ports = container::discover().await;
+    let container_map: std::collections::HashMap<u16, &container::ContainerPort> =
+        container_ports.iter().map(|cp| (cp.port, cp)).collect();
 
     let mut ports: Vec<PortInfo> = alive
         .iter()
         .map(|&port| {
             let app = apps.iter().find(|a| a.port == i64::from(port));
+            let cp = container_map.get(&port);
+            let source = cp.map(|c| c.source.clone());
             if let Some(app) = app {
                 let name = if app.name.is_empty() {
                     None
@@ -260,6 +291,16 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
                     category: Some(app.category.clone()),
                     registered: true,
                     alive: true,
+                    source,
+                }
+            } else if let Some(c) = cp {
+                PortInfo {
+                    port,
+                    name: Some(c.container_name.clone()),
+                    category: Some(c.source.clone()),
+                    registered: false,
+                    alive: true,
+                    source,
                 }
             } else if let Some(known) = known_ports::lookup(port) {
                 PortInfo {
@@ -268,6 +309,7 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
                     category: Some("macos".to_string()),
                     registered: false,
                     alive: true,
+                    source: None,
                 }
             } else {
                 PortInfo {
@@ -276,14 +318,29 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
                     category: None,
                     registered: false,
                     alive: true,
+                    source,
                 }
             }
         })
         .collect();
 
+    // Add container ports not found in TCP scan
+    for cp in &container_ports {
+        if !alive.contains(&cp.port) && cp.port != state.dashboard_port {
+            ports.push(PortInfo {
+                port: cp.port,
+                name: Some(cp.container_name.clone()),
+                category: Some(cp.source.clone()),
+                registered: false,
+                alive: true,
+                source: Some(cp.source.clone()),
+            });
+        }
+    }
+
     for app in &apps {
         let port = u16::try_from(app.port).unwrap_or(0);
-        if !alive.contains(&port) {
+        if !alive.contains(&port) && !container_ports.iter().any(|cp| cp.port == port) {
             let name = if app.name.is_empty() {
                 None
             } else {
@@ -295,6 +352,7 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
                 category: Some(app.category.clone()),
                 registered: true,
                 alive: false,
+                source: None,
             });
         }
     }
@@ -518,18 +576,24 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
         return dashboard_markdown_inner(&state).await;
     }
 
-    // Serve from cache for fast initial load; SSE will deliver fresh data shortly
-    let alive = scanner::probe_ports(
-        &db::list_apps(&state.db)
-            .await
-            .unwrap_or_default()
+    // Quick probe of known ports + container discovery for fast first paint
+    let apps = db::list_apps(&state.db).await.unwrap_or_default();
+    let container_ports = container::discover().await;
+    let mut alive = scanner::probe_ports(
+        &apps
             .iter()
             .filter_map(|a| u16::try_from(a.port).ok())
             .collect::<Vec<_>>(),
         state.dashboard_port,
     )
     .await;
-    let apps = db::list_apps(&state.db).await.unwrap_or_default();
+    // Add container ports
+    for cp in &container_ports {
+        if !alive.contains(&cp.port) && cp.port != state.dashboard_port {
+            alive.push(cp.port);
+        }
+    }
+    alive.sort_unstable();
     let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
     let html = template::render(
         &alive,
@@ -538,6 +602,7 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
         state.scan_end,
         state.dashboard_port,
         &tag_colors,
+        &container_ports,
     );
     // Trigger background full scan — SSE will deliver it
     state.scan_notify.notify_one();
@@ -552,7 +617,8 @@ async fn dashboard_markdown_inner(state: &AppState) -> Response {
     signal_scan_start(state);
     let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
-    let md = render_markdown(&alive, &apps, state.dashboard_port);
+    let container_ports = container::discover().await;
+    let md = render_markdown(&alive, &apps, state.dashboard_port, &container_ports);
     // Publish scan results directly to SSE clients (no duplicate scan)
     publish_scan(state, &alive).await;
     signal_scan_end(state);
@@ -566,7 +632,12 @@ async fn dashboard_markdown_inner(state: &AppState) -> Response {
         .into_response()
 }
 
-pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -> String {
+pub fn render_markdown(
+    alive_ports: &[u16],
+    apps: &[App],
+    dashboard_port: u16,
+    container_ports: &[container::ContainerPort],
+) -> String {
     use std::fmt::Write;
 
     let mut md = format!(
@@ -575,12 +646,15 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
          Map names to localhost ports. Made for agents and humans.\n\n"
     );
 
+    let container_map: std::collections::HashMap<u16, &container::ContainerPort> =
+        container_ports.iter().map(|cp| (cp.port, cp)).collect();
+
     if apps.is_empty() {
         md.push_str("No registered apps. Use the API to add some.\n\n");
     } else {
         let _ = writeln!(
             md,
-            "## Registered Apps\n\n| Port | Name | Category | Status |\n|------|------|----------|--------|"
+            "## Registered Apps\n\n| Port | Name | Category | Source | Status |\n|------|------|----------|--------|--------|"
         );
         for app in apps {
             let port = u16::try_from(app.port).unwrap_or(0);
@@ -594,9 +668,10 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
             } else {
                 app.name.clone()
             };
+            let source = container_map.get(&port).map_or("", |cp| cp.source.as_str());
             let _ = writeln!(
                 md,
-                "| {} | {} | {} | {status} |",
+                "| {} | {} | {} | {source} | {status} |",
                 app.port, name, app.category
             );
         }
@@ -610,11 +685,15 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
     if !unregistered.is_empty() {
         let _ = writeln!(
             md,
-            "\n## Other Open Ports\n\n| Port | Name | Status |\n|------|------|--------|"
+            "\n## Other Open Ports\n\n| Port | Name | Source | Status |\n|------|------|--------|--------|"
         );
         for port in &unregistered {
-            let name = known_ports::lookup(*port).map_or("-", |k| k.name);
-            let _ = writeln!(md, "| {port} | {name} | up |");
+            let (name, source) = if let Some(cp) = container_map.get(port) {
+                (cp.container_name.as_str(), cp.source.as_str())
+            } else {
+                (known_ports::lookup(*port).map_or("-", |k| k.name), "")
+            };
+            let _ = writeln!(md, "| {port} | {name} | {source} | up |");
         }
     }
 
