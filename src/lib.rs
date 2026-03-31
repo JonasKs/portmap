@@ -23,6 +23,9 @@ use tower_http::cors::CorsLayer;
 use crate::db::{App, CreateApp, SetTagColor, TagColor, UpdateApp};
 use crate::scanner::scan_ports;
 
+/// Tracks how many SSE clients are connected.
+pub type SseClients = Arc<std::sync::atomic::AtomicUsize>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: SqlitePool,
@@ -30,7 +33,11 @@ pub struct AppState {
     pub scan_start: u16,
     pub scan_end: u16,
     pub updates: watch::Receiver<String>,
+    pub updates_tx: Arc<watch::Sender<String>>,
+    pub scan_active: watch::Receiver<bool>,
+    pub scan_active_tx: Arc<watch::Sender<bool>>,
     pub scan_notify: Arc<Notify>,
+    pub sse_clients: SseClients,
 }
 
 #[derive(Serialize)]
@@ -75,7 +82,8 @@ pub async fn create_router_with_test_db() -> Router {
         .await
         .expect("Failed to run migrations");
 
-    let (_tx, rx) = watch::channel(String::new());
+    let (tx, rx) = watch::channel(String::new());
+    let (sa_tx, sa_rx) = watch::channel(false);
 
     let state = AppState {
         db: pool,
@@ -83,29 +91,115 @@ pub async fn create_router_with_test_db() -> Router {
         scan_start: 1000,
         scan_end: 9999,
         updates: rx,
+        updates_tx: Arc::new(tx),
+        scan_active: sa_rx,
+        scan_active_tx: Arc::new(sa_tx),
         scan_notify: Arc::new(Notify::new()),
+        sse_clients: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     };
     create_router(state)
 }
 
 // -- Shared background scanner --
 
+/// Signal that a full scan is starting, for SSE scan-status events.
+fn signal_scan_start(state: &AppState) {
+    let _ = state.scan_active_tx.send(true);
+}
+
+/// Signal that a full scan completed.
+fn signal_scan_end(state: &AppState) {
+    let _ = state.scan_active_tx.send(false);
+}
+
+/// Build the SSE payload JSON from scan results and publish it to SSE clients.
+async fn publish_scan(state: &AppState, alive: &[u16]) {
+    let apps = db::list_apps(&state.db).await.unwrap_or_default();
+    let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
+
+    let rows = template::build_rows(alive, &apps);
+    let total = rows.len();
+    let plural = if total == 1 { "" } else { "s" };
+    let categories = template::extract_categories(&apps);
+    let filters_html = template::render_filters(&categories, &tag_colors);
+    let custom_css = template::render_custom_css(&tag_colors);
+
+    let payload = serde_json::json!({
+        "pill": format!("{total} port{plural}"),
+        "rows": rows,
+        "filters_html": filters_html,
+        "custom_css": custom_css,
+        "discovered": true,
+    });
+
+    let _ = state.updates_tx.send(payload.to_string());
+}
+
+const ACTIVE_INTERVAL_SECS: u64 = 10;
+const IDLE_INTERVAL_SECS: u64 = 30;
+const ACTIVE_FULL_EVERY: u32 = 6; // 6 × 10s = 60s
+const IDLE_FULL_EVERY: u32 = 10; // 10 × 30s = 5min
+
 /// Background task that scans ports periodically and broadcasts changes via
 /// the watch channel. CRUD handlers wake it early via `scan_notify`.
+#[allow(clippy::too_many_arguments)]
 pub async fn scanner_loop(
     db: SqlitePool,
     scan_start: u16,
     scan_end: u16,
     dashboard_port: u16,
-    tx: watch::Sender<String>,
+    tx: Arc<watch::Sender<String>>,
+    scan_active_tx: Arc<watch::Sender<bool>>,
     notify: Arc<Notify>,
+    sse_clients: SseClients,
 ) {
+    use std::sync::atomic::Ordering;
+
     let mut prev_json = String::new();
     let mut forced = false;
+    let mut tick: u32 = 0;
+    let mut discovered_ports: Vec<u16> = Vec::new();
+
     loop {
-        let alive = scan_ports(scan_start, scan_end, dashboard_port).await;
+        let active = sse_clients.load(Ordering::Relaxed) > 0;
+        let full_every = if active {
+            ACTIVE_FULL_EVERY
+        } else {
+            IDLE_FULL_EVERY
+        };
+        let interval = if active {
+            ACTIVE_INTERVAL_SECS
+        } else {
+            IDLE_INTERVAL_SECS
+        };
+
         let apps = db::list_apps(&db).await.unwrap_or_default();
         let tag_colors = db::list_tag_colors(&db).await.unwrap_or_default();
+
+        // Full discovery on first run, at interval, or when forced (CRUD/refresh/SSE connect)
+        let is_full_scan = tick == 0 || tick.is_multiple_of(full_every) || forced;
+        if is_full_scan {
+            let _ = scan_active_tx.send(true);
+        }
+        let alive = if is_full_scan {
+            let full = scan_ports(scan_start, scan_end, dashboard_port).await;
+            discovered_ports.clone_from(&full);
+            full
+        } else {
+            // Quick check: only probe registered + previously discovered ports
+            let mut check_ports: Vec<u16> = apps
+                .iter()
+                .filter_map(|a| u16::try_from(a.port).ok())
+                .collect();
+            for &p in &discovered_ports {
+                if !check_ports.contains(&p) {
+                    check_ports.push(p);
+                }
+            }
+            check_ports.sort_unstable();
+            check_ports.dedup();
+            scanner::probe_ports(&check_ports, dashboard_port).await
+        };
 
         let rows = template::build_rows(&alive, &apps);
         let total = rows.len();
@@ -119,6 +213,7 @@ pub async fn scanner_loop(
             "rows": rows,
             "filters_html": filters_html,
             "custom_css": custom_css,
+            "discovered": is_full_scan,
         });
 
         let json = payload.to_string();
@@ -126,13 +221,16 @@ pub async fn scanner_loop(
             prev_json.clone_from(&json);
             let _ = tx.send(json);
         }
+        if is_full_scan {
+            let _ = scan_active_tx.send(false);
+        }
 
+        tick = tick.wrapping_add(1);
         forced = false;
         tokio::select! {
-            () = tokio::time::sleep(std::time::Duration::from_secs(10)) => {},
+            () = tokio::time::sleep(std::time::Duration::from_secs(interval)) => {},
             () = notify.notified() => {
                 forced = true;
-                // Brief delay to let DB writes settle
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             },
         }
@@ -142,6 +240,7 @@ pub async fn scanner_loop(
 // -- Port scanning --
 
 async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
+    signal_scan_start(&state);
     let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
 
@@ -201,6 +300,9 @@ async fn list_ports(State(state): State<AppState>) -> Json<Vec<PortInfo>> {
     }
 
     ports.sort_by_key(|p| p.port);
+    // Publish scan results directly to SSE clients (no duplicate scan)
+    publish_scan(&state, &alive).await;
+    signal_scan_end(&state);
     Json(ports)
 }
 
@@ -322,15 +424,45 @@ async fn kill_port(State(state): State<AppState>, Path(port): Path<u16>) -> Stat
 
 // -- SSE live updates --
 
+/// Guard that decrements the SSE client counter on drop (including cancellation).
+struct SseGuard(SseClients);
+
+impl Drop for SseGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 async fn sse_handler(
     State(state): State<AppState>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    use std::sync::atomic::Ordering;
+
+    state.sse_clients.fetch_add(1, Ordering::Relaxed);
+    state.scan_notify.notify_one();
+
+    let guard = SseGuard(state.sse_clients.clone());
     let mut rx = state.updates.clone();
+    let mut scan_rx = state.scan_active.clone();
+    // Mark current values as seen so we only send *new* updates
+    rx.borrow_and_update();
+    scan_rx.borrow_and_update();
     let stream = async_stream::stream! {
-        while rx.changed().await.is_ok() {
-            let data = rx.borrow_and_update().clone();
-            if !data.is_empty() {
-                yield Ok(Event::default().event("refresh").data(data));
+        let _guard = guard;
+        loop {
+            tokio::select! {
+                result = rx.changed() => {
+                    if result.is_err() { break; }
+                    let data = rx.borrow_and_update().clone();
+                    if !data.is_empty() {
+                        yield Ok(Event::default().event("refresh").data(data));
+                    }
+                }
+                result = scan_rx.changed() => {
+                    if result.is_err() { break; }
+                    let active = *scan_rx.borrow_and_update();
+                    yield Ok(Event::default().event("scan").data(if active { "start" } else { "done" }));
+                }
             }
         }
     };
@@ -386,7 +518,17 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
         return dashboard_markdown_inner(&state).await;
     }
 
-    let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
+    // Serve from cache for fast initial load; SSE will deliver fresh data shortly
+    let alive = scanner::probe_ports(
+        &db::list_apps(&state.db)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|a| u16::try_from(a.port).ok())
+            .collect::<Vec<_>>(),
+        state.dashboard_port,
+    )
+    .await;
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
     let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
     let html = template::render(
@@ -397,6 +539,8 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
         state.dashboard_port,
         &tag_colors,
     );
+    // Trigger background full scan — SSE will deliver it
+    state.scan_notify.notify_one();
     ([(header::VARY, "Accept")], Html(html)).into_response()
 }
 
@@ -405,9 +549,13 @@ async fn dashboard_markdown(State(state): State<AppState>) -> Response {
 }
 
 async fn dashboard_markdown_inner(state: &AppState) -> Response {
+    signal_scan_start(state);
     let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
     let apps = db::list_apps(&state.db).await.unwrap_or_default();
     let md = render_markdown(&alive, &apps, state.dashboard_port);
+    // Publish scan results directly to SSE clients (no duplicate scan)
+    publish_scan(state, &alive).await;
+    signal_scan_end(state);
     (
         [
             (header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
@@ -432,24 +580,24 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
     } else {
         let _ = writeln!(
             md,
-            "## Registered Apps\n\n| Name | Port | Category | Status |\n|------|------|----------|--------|"
+            "## Registered Apps\n\n| Port | Name | Category | Status |\n|------|------|----------|--------|"
         );
         for app in apps {
             let port = u16::try_from(app.port).unwrap_or(0);
             let status = if alive_ports.contains(&port) {
-                "alive"
+                "up"
             } else {
                 "down"
             };
             let name = if app.name.is_empty() {
-                format!(":{}", app.port)
+                "-".to_string()
             } else {
                 app.name.clone()
             };
             let _ = writeln!(
                 md,
                 "| {} | {} | {} | {status} |",
-                name, app.port, app.category
+                app.port, name, app.category
             );
         }
     }
@@ -462,34 +610,30 @@ pub fn render_markdown(alive_ports: &[u16], apps: &[App], dashboard_port: u16) -
     if !unregistered.is_empty() {
         let _ = writeln!(
             md,
-            "\n## Other Open Ports\n\n| Port | Name | URL |\n|------|------|-----|"
+            "\n## Other Open Ports\n\n| Port | Name | Status |\n|------|------|--------|"
         );
         for port in &unregistered {
-            let name = known_ports::lookup(*port).map_or("—", |k| k.name);
-            let _ = writeln!(md, "| {port} | {name} | http://localhost:{port} |");
+            let name = known_ports::lookup(*port).map_or("-", |k| k.name);
+            let _ = writeln!(md, "| {port} | {name} | up |");
         }
     }
 
     let _ = write!(
         md,
         r#"
-## API Reference
+## API
 
 Base URL: `http://localhost:{dashboard_port}`
 
-### List all open ports (with app info)
+### Get all ports
 
 ```bash
 curl http://localhost:{dashboard_port}/api/ports
 ```
 
-### List registered apps
+Returns JSON array of all ports with name, category, registered status, and alive status.
 
-```bash
-curl http://localhost:{dashboard_port}/api/apps
-```
-
-### Register a new app
+### Register a port
 
 ```bash
 curl -X POST http://localhost:{dashboard_port}/api/apps \
@@ -497,29 +641,24 @@ curl -X POST http://localhost:{dashboard_port}/api/apps \
   -d '{{"name": "my-app", "port": 3000, "category": "frontend"}}'
 ```
 
-### Bulk register apps
+### Update a registration
 
 ```bash
-curl -X POST http://localhost:{dashboard_port}/api/apps/bulk \
-  -H "Content-Type: application/json" \
-  -d '[
-    {{"name": "api", "port": 8080, "category": "backend"}},
-    {{"name": "web", "port": 3000, "category": "frontend"}}
-  ]'
-```
-
-### Update an app
-
-```bash
-curl -X PUT http://localhost:{dashboard_port}/api/apps/1 \
+curl -X PUT http://localhost:{dashboard_port}/api/apps/ID \
   -H "Content-Type: application/json" \
   -d '{{"name": "new-name", "category": "backend"}}'
 ```
 
-### Delete an app
+### Remove a registration
 
 ```bash
-curl -X DELETE http://localhost:{dashboard_port}/api/apps/1
+curl -X DELETE http://localhost:{dashboard_port}/api/apps/ID
+```
+
+### Kill a process
+
+```bash
+curl -X POST http://localhost:{dashboard_port}/api/kill/PORT
 ```
 "#
     );

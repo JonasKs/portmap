@@ -141,7 +141,11 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
         .expect("Failed to initialize database");
 
     let (tx, rx) = tokio::sync::watch::channel(String::new());
+    let tx = std::sync::Arc::new(tx);
+    let (sa_tx, sa_rx) = tokio::sync::watch::channel(false);
+    let sa_tx = std::sync::Arc::new(sa_tx);
     let scan_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let sse_clients = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let state = AppState {
         db: db.clone(),
@@ -149,7 +153,11 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
         scan_start,
         scan_end,
         updates: rx,
+        updates_tx: tx.clone(),
+        scan_active: sa_rx,
+        scan_active_tx: sa_tx.clone(),
         scan_notify: scan_notify.clone(),
+        sse_clients: sse_clients.clone(),
     };
 
     tokio::spawn(portmap::scanner_loop(
@@ -158,7 +166,9 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
         scan_end,
         port,
         tx,
+        sa_tx,
         scan_notify,
+        sse_clients,
     ));
 
     let app = portmap::create_router(state);

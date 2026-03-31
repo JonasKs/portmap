@@ -186,7 +186,7 @@ pub fn render(
         <span class="pill">{total} port{plural}</span>
       </div>
       <div class="nav-right">
-        <span class="meta">{scan_start}&ndash;{scan_end}</span>
+        <span class="meta" id="scan-meta" data-default="ports {scan_start}&ndash;{scan_end}">ports {scan_start}&ndash;{scan_end}</span>
         <button class="btn" id="refresh-btn" onclick="triggerRefresh()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
         </button>
@@ -198,7 +198,6 @@ pub fn render(
     </div>
     <div class="links">
       <a href="/api/ports">json</a>
-      <a href="/api/apps">apps</a>
       <a href="/markdown">markdown</a>
       <a href="https://github.com/jonasks/portmap" class="gh" target="_blank"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
       <span class="links-port">:{dashboard_port}</span>
@@ -222,28 +221,31 @@ pub fn render(
 /// Build row data for all ports. Returns individual [`RowData`] entries
 /// so the SSE handler can diff at the row level.
 pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
-    let mut rows = Vec::new();
-    let mut macos_rows = Vec::new();
+    let mut alive_rows = Vec::new();
+    let mut known_rows = Vec::new();
+    let mut down_rows = Vec::new();
 
+    // Alive ports: registered + unregistered (non-known) first
     for &port in alive_ports {
         let app = apps.iter().find(|a| a.port == i64::from(port));
         let known = crate::known_ports::lookup(port);
 
         if let Some(a) = app {
-            rows.push(render_single_row(port, &a.name, &a.category, a.id, true));
+            alive_rows.push(render_single_row(port, &a.name, &a.category, a.id, true));
         } else if let Some(k) = known {
-            macos_rows.push(render_single_row(port, k.name, "macos", 0, true));
+            known_rows.push(render_single_row(port, k.name, "macos", 0, true));
         } else {
-            rows.push(render_single_row(port, "", "", 0, true));
+            alive_rows.push(render_single_row(port, "", "", 0, true));
         }
     }
 
+    // Offline registered apps at the bottom
     for app in apps {
         let port = u16::try_from(app.port).unwrap_or(0);
         if alive_ports.contains(&port) {
             continue;
         }
-        rows.push(render_single_row(
+        down_rows.push(render_single_row(
             port,
             &app.name,
             &app.category,
@@ -252,8 +254,10 @@ pub fn build_rows(alive_ports: &[u16], apps: &[App]) -> Vec<RowData> {
         ));
     }
 
-    rows.extend(macos_rows);
-    rows
+    // Order: alive → known services → offline
+    alive_rows.extend(known_rows);
+    alive_rows.extend(down_rows);
+    alive_rows
 }
 
 fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: bool) -> RowData {
@@ -270,6 +274,11 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
     let badge = category_badge(&cat_esc);
     let status = if alive { "alive" } else { "down" };
     let row_class = if alive { "row" } else { "row is-down" };
+    let offline_pill = if alive {
+        String::new()
+    } else {
+        r#"<span class="offline-pill">offline</span>"#.to_string()
+    };
 
     let name_val = if name.is_empty() {
         String::new()
@@ -289,7 +298,7 @@ fn render_single_row(port: u16, name: &str, category: &str, app_id: i64, alive: 
             <input class="inline-input" data-field="name" value="{name_val}" placeholder="name" style="display:none" />
           </td>
           <td class="c-badge">
-            <span class="c-badge-text">{badge}</span>
+            <span class="c-badge-text">{offline_pill}{badge}</span>
             <input class="inline-input cat-inline" data-field="category" value="{cat_esc}" placeholder="tag" style="display:none" />
           </td>
           <td class="c-port">{port}</td>
@@ -369,23 +378,32 @@ const CSS: &str = r"
 
   .logo {
     font-size: 1rem;
-    color: #555;
+    color: #fff;
   }
 
   h1 {
     font-size: 0.9rem;
     font-weight: 600;
-    color: #999;
+    color: #fff;
     letter-spacing: -0.01em;
   }
 
   .pill {
     font-size: 0.65rem;
-    color: #555;
+    color: #b3b3b3;
     background: rgba(255,255,255,0.04);
     padding: 0.15rem 0.5rem;
     border-radius: 9999px;
     border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .meta.scanning {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
   }
 
   .nav-right {
@@ -396,7 +414,7 @@ const CSS: &str = r"
 
   .meta {
     font-size: 0.65rem;
-    color: #3a3a3a;
+    color: #b3b3b3;
   }
 
   .btn {
@@ -445,11 +463,21 @@ const CSS: &str = r"
   }
 
   .row.is-down {
-    opacity: 0.55;
+    opacity: 0.65;
   }
 
   .row.is-down:hover {
-    opacity: 0.75;
+    opacity: 0.85;
+  }
+
+  .offline-pill {
+    font-size: 0.6rem;
+    color: #666;
+    background: rgba(255,255,255,0.04);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.06);
+    margin-right: 0.3rem;
   }
 
   td {
@@ -487,7 +515,7 @@ const CSS: &str = r"
   }
 
   .unnamed {
-    color: #555;
+    color: #999;
     font-weight: 400;
   }
 
@@ -510,7 +538,7 @@ const CSS: &str = r"
     font-weight: 500;
     padding: 0.1rem 0.45rem;
     border-radius: 4px;
-    text-transform: uppercase;
+    text-transform: lowercase;
     letter-spacing: 0.03em;
     background: rgba(200, 200, 200, 0.08);
     color: rgba(200, 200, 200, 0.7);
@@ -624,6 +652,7 @@ const CSS: &str = r"
 
   .filters {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.35rem;
     margin-bottom: 0.5rem;
     padding: 0 0.1rem;
@@ -892,30 +921,26 @@ function getActiveFilter() {
   return btn.dataset.category || 'all';
 }
 
+function matchesFilter(row, cat) {
+  if (cat === 'all') return true;
+  if (cat === '__offline') return row.dataset.alive === 'false';
+  const badge = row.querySelector('.badge');
+  const rowCat = badge ? badge.textContent.trim() : '';
+  return rowCat === cat;
+}
+
 function filterBy(cat, btn) {
   document.querySelectorAll('.filter').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   document.querySelectorAll('.row').forEach(row => {
-    if (cat === 'all') {
-      row.style.display = '';
-    } else {
-      const badge = row.querySelector('.badge');
-      const rowCat = badge ? badge.textContent.trim() : '';
-      row.style.display = (rowCat === cat) ? '' : 'none';
-    }
+    row.style.display = matchesFilter(row, cat) ? '' : 'none';
   });
 }
 
 function reapplyFilter() {
   const cat = getActiveFilter();
   document.querySelectorAll('.row').forEach(row => {
-    if (cat === 'all') {
-      row.style.display = '';
-    } else {
-      const badge = row.querySelector('.badge');
-      const rowCat = badge ? badge.textContent.trim() : '';
-      row.style.display = (rowCat === cat) ? '' : 'none';
-    }
+    row.style.display = matchesFilter(row, cat) ? '' : 'none';
   });
 }
 
@@ -1044,9 +1069,22 @@ document.addEventListener('click', e => {
   if (rowMenuTarget && !rowMenu.contains(e.target)) hideRowMenu();
 });
 
+function showScanning() {
+  const meta = document.getElementById('scan-meta');
+  meta.textContent = 'scanning ports ' + meta.dataset.default.replace('ports ', '');
+  meta.classList.add('scanning');
+}
+
+function hideScanning() {
+  const meta = document.getElementById('scan-meta');
+  meta.innerHTML = meta.dataset.default;
+  meta.classList.remove('scanning');
+}
+
 function triggerRefresh() {
   const btn = document.getElementById('refresh-btn');
   btn.classList.add('spinning');
+  showScanning();
   fetch('/api/refresh', { method: 'POST' });
 }
 
@@ -1072,6 +1110,9 @@ document.addEventListener('contextmenu', e => {
 function applyRefresh(data) {
   // Update pill
   document.querySelector('.pill').textContent = data.pill;
+  if (data.discovered) {
+    hideScanning();
+  }
 
   // Update filter buttons (preserve active state)
   const activeCat = getActiveFilter();
@@ -1165,7 +1206,13 @@ evtSource.addEventListener('refresh', (e) => {
   applyRefresh(data);
 });
 
+evtSource.addEventListener('scan', (e) => {
+  if (e.data === 'start') showScanning();
+  else hideScanning();
+});
+
 initColorMenu();
 initRowMenu();
+showScanning();
 </script>
 "#;

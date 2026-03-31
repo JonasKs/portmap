@@ -290,7 +290,7 @@ async fn test_markdown_endpoint() {
         .unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert!(text.contains("# portmap"));
-    assert!(text.contains("## API Reference"));
+    assert!(text.contains("## API"));
 }
 
 #[tokio::test]
