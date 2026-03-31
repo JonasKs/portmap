@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/JonasKs/portmap/compare/portmap-v0.6.1...portmap-v0.7.0) (2026-03-31)
+
+
+### Features
+
+* add ~/.config/portmap/config.toml ([#11](https://github.com/JonasKs/portmap/issues/11)) ([6c14c66](https://github.com/JonasKs/portmap/commit/6c14c660a4e6d34d721b4bb969a921da50d1de42))
+* Docker/Podman container port discovery ([#12](https://github.com/JonasKs/portmap/issues/12)) ([1a66f69](https://github.com/JonasKs/portmap/commit/1a66f69dc4a0d32364a7be4b9c01d6159eae2c68))
+
 ## [0.6.1](https://github.com/JonasKs/portmap/compare/portmap-v0.6.0...portmap-v0.6.1) (2026-03-31)
 
 
