@@ -215,6 +215,7 @@ pub fn render(
     <div class="color-grid"></div>
     <button class="color-reset">reset</button>
   </div>
+  <div id="toasts"></div>
 {SCRIPT}
 </body>
 </html>"#
@@ -905,6 +906,40 @@ const CSS: &str = r"
     color: #999;
   }
 
+  #toasts {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    align-items: flex-end;
+  }
+
+  .toast {
+    font-family: inherit;
+    font-size: 0.75rem;
+    padding: 0.5rem 0.8rem;
+    border-radius: 6px;
+    background: #1a1a1e;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: #ccc;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    animation: toast-in 0.2s ease-out;
+    transition: opacity 0.3s;
+  }
+
+  .toast.toast-error {
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #ef4444;
+  }
+
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
   @keyframes spin { to { transform: rotate(360deg); } }
   .btn.spinning svg { animation: spin 0.6s linear infinite; }
 ";
@@ -996,12 +1031,29 @@ function reapplyFilter() {
   });
 }
 
+function showToast(msg, isError) {
+  const container = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast' + (isError ? ' toast-error' : '');
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+}
+
 async function deleteApp(appId) {
-  await fetch(`/api/apps/${appId}`, { method: 'DELETE' });
+  const resp = await fetch(`/api/apps/${appId}`, { method: 'DELETE' });
+  if (resp.ok) showToast('Unregistered');
+  else showToast('Failed to unregister', true);
 }
 
 async function killPort(port) {
-  await fetch(`/api/kill/${port}`, { method: 'POST' });
+  const resp = await fetch(`/api/kill/${port}`, { method: 'POST' });
+  if (resp.ok) {
+    showToast('Process killed');
+  } else {
+    const msg = await resp.text();
+    showToast(msg || 'Failed to kill process', true);
+  }
 }
 
 // -- Row context menu --

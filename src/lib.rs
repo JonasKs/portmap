@@ -2,6 +2,8 @@ pub mod config;
 pub mod container;
 pub mod db;
 pub mod known_ports;
+pub mod ports;
+pub mod process;
 pub mod scanner;
 pub mod template;
 
@@ -65,7 +67,7 @@ pub fn create_router(state: AppState) -> Router {
             get(get_app).put(update_app).delete(delete_app),
         )
         .route("/events", get(sse_handler))
-        .route("/api/kill/{port}", post(kill_port))
+        .route("/api/kill/{port}", post(kill_port_handler))
         .route("/api/refresh", post(trigger_refresh))
         .route("/api/tag-colors", get(list_tag_colors))
         .route(
@@ -122,14 +124,8 @@ async fn publish_scan(state: &AppState, alive: &[u16]) {
     let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
     let container_ports = container::discover().await;
 
-    // Merge container ports into alive list
     let mut merged_alive = alive.to_vec();
-    for cp in &container_ports {
-        if !merged_alive.contains(&cp.port) && cp.port != state.dashboard_port {
-            merged_alive.push(cp.port);
-        }
-    }
-    merged_alive.sort_unstable();
+    ports::merge_alive(&mut merged_alive, &container_ports, state.dashboard_port);
 
     let rows = template::build_rows(&merged_alive, &apps, &container_ports);
     let total = rows.len();
@@ -220,13 +216,7 @@ pub async fn scanner_loop(
         if is_full_scan {
             cached_container_ports = container::discover().await;
         }
-        // Add container ports that the TCP scan might have missed
-        for cp in &cached_container_ports {
-            if !alive.contains(&cp.port) && cp.port != dashboard_port {
-                alive.push(cp.port);
-            }
-        }
-        alive.sort_unstable();
+        ports::merge_alive(&mut alive, &cached_container_ports, dashboard_port);
 
         let rows = template::build_rows(&alive, &apps, &cached_container_ports);
         let total = rows.len();
@@ -454,31 +444,20 @@ async fn trigger_refresh(State(state): State<AppState>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-async fn kill_port(State(state): State<AppState>, Path(port): Path<u16>) -> StatusCode {
-    let output = std::process::Command::new("lsof")
-        .args(["-ti", &format!(":{port}"), "-sTCP:LISTEN"])
-        .output();
-
-    let Ok(output) = output else {
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    };
-
-    let pids: Vec<&str> = std::str::from_utf8(&output.stdout)
-        .unwrap_or("")
-        .lines()
-        .filter(|l| !l.is_empty())
-        .collect();
-
-    if pids.is_empty() {
-        return StatusCode::NOT_FOUND;
+async fn kill_port_handler(
+    State(state): State<AppState>,
+    Path(port): Path<u16>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    match process::kill_port(port).await {
+        process::KillResult::NotFound => {
+            Err((StatusCode::NOT_FOUND, "Nothing running".to_string()))
+        }
+        process::KillResult::Error(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        process::KillResult::Killed | process::KillResult::ForceKilled => {
+            state.scan_notify.notify_one();
+            Ok(StatusCode::NO_CONTENT)
+        }
     }
-
-    for pid in &pids {
-        let _ = std::process::Command::new("kill").arg(pid).status();
-    }
-
-    state.scan_notify.notify_one();
-    StatusCode::NO_CONTENT
 }
 
 // -- SSE live updates --
@@ -588,13 +567,7 @@ async fn dashboard(State(state): State<AppState>, headers: HeaderMap) -> Respons
         state.dashboard_port,
     )
     .await;
-    // Add container ports
-    for cp in &container_ports {
-        if !alive.contains(&cp.port) && cp.port != state.dashboard_port {
-            alive.push(cp.port);
-        }
-    }
-    alive.sort_unstable();
+    ports::merge_alive(&mut alive, &container_ports, state.dashboard_port);
     let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
     let html = template::render(
         &alive,
