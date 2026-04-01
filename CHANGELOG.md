@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/JonasKs/portmap/compare/portmap-v0.7.0...portmap-v0.7.1) (2026-04-01)
+
+
+### Bug Fixes
+
+* trigger release ([3b6edc2](https://github.com/JonasKs/portmap/commit/3b6edc2a82085a5412121500418ce4d0fa82b797))
+
 ## [0.7.0](https://github.com/JonasKs/portmap/compare/portmap-v0.6.1...portmap-v0.7.0) (2026-03-31)
 
 
