@@ -200,13 +200,7 @@ async fn cmd_list(db_path: &str, dashboard_port: u16) {
     let mut alive = portmap::scanner::scan_ports(1000, 9999, 0).await;
     let container_ports = portmap::container::discover().await;
 
-    // Add container ports that TCP scan might have missed
-    for cp in &container_ports {
-        if !alive.contains(&cp.port) {
-            alive.push(cp.port);
-        }
-    }
-    alive.sort_unstable();
+    portmap::ports::merge_alive(&mut alive, &container_ports, 0);
 
     if apps.is_empty() && alive.is_empty() {
         println!("No ports found.");
@@ -391,8 +385,6 @@ async fn cmd_update(
 }
 
 async fn cmd_kill(db_path: &str, target: &str) {
-    use std::process::Command as Cmd;
-
     let db = portmap::db::init(db_path)
         .await
         .expect("Failed to open database");
@@ -403,27 +395,6 @@ async fn cmd_kill(db_path: &str, target: &str) {
         return;
     };
 
-    // Find PIDs *listening* on this port (not clients connected to it)
-    let output = Cmd::new("lsof")
-        .args(["-ti", &format!(":{port}"), "-sTCP:LISTEN"])
-        .output();
-
-    let Ok(output) = output else {
-        eprintln!("Failed to run lsof");
-        return;
-    };
-
-    let pids: Vec<&str> = std::str::from_utf8(&output.stdout)
-        .unwrap_or("")
-        .lines()
-        .filter(|l| !l.is_empty())
-        .collect();
-
-    if pids.is_empty() {
-        println!("Nothing running on :{port}");
-        return;
-    }
-
     let display = app.as_ref().map_or(format!(":{port}"), |a| {
         if a.name.is_empty() {
             format!(":{port}")
@@ -432,10 +403,14 @@ async fn cmd_kill(db_path: &str, target: &str) {
         }
     });
 
-    for pid in &pids {
-        let _ = Cmd::new("kill").arg(pid).status();
+    match portmap::process::kill_port(port).await {
+        portmap::process::KillResult::NotFound => println!("Nothing running on :{port}"),
+        portmap::process::KillResult::Killed => println!("Killed {display} (port {port})"),
+        portmap::process::KillResult::ForceKilled => {
+            println!("Force killed {display} (port {port})");
+        }
+        portmap::process::KillResult::Error(e) => eprintln!("Error: {e}"),
     }
-    println!("Killed {display} (port {port})");
 }
 
 fn is_homebrew_install() -> bool {
