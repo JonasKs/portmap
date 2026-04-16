@@ -162,6 +162,7 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
         scan_active: sa_rx,
         scan_active_tx: sa_tx,
         scan_notify,
+        cached_ports: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
     tokio::spawn(portmap::scan_worker(state.clone()));

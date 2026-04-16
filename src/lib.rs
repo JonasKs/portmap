@@ -27,6 +27,9 @@ use tower_http::cors::CorsLayer;
 use crate::db::{App, CreateApp, SetTagColor, TagColor, UpdateApp};
 use crate::scanner::scan_ports;
 
+/// Cached scan results shared between the scan worker and republish path.
+pub type CachedPorts = Arc<std::sync::Mutex<Vec<u16>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: SqlitePool,
@@ -37,7 +40,10 @@ pub struct AppState {
     pub updates_tx: Arc<watch::Sender<String>>,
     pub scan_active: watch::Receiver<bool>,
     pub scan_active_tx: Arc<watch::Sender<bool>>,
+    /// Triggers a full port scan (refresh button, auto-refresh).
     pub scan_notify: Arc<Notify>,
+    /// Last scan results, used to republish after CRUD changes without rescanning.
+    pub cached_ports: CachedPorts,
 }
 
 #[derive(Serialize)]
@@ -97,6 +103,7 @@ pub async fn create_router_with_test_db() -> Router {
         scan_active: sa_rx,
         scan_active_tx: Arc::new(sa_tx),
         scan_notify: Arc::new(Notify::new()),
+        cached_ports: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
     create_router(state)
 }
@@ -146,49 +153,31 @@ async fn publish_scan(state: &AppState, alive: &[u16]) {
     let _ = state.updates_tx.send(payload.to_string());
 }
 
-/// Background task that scans ports on demand (when `scan_notify` fires)
-/// and broadcasts results via the watch channel.
-/// CRUD handlers and the refresh button wake it via `scan_notify`.
+/// Background task that runs a full port scan when `scan_notify` fires
+/// (refresh button / auto-refresh) and broadcasts results via the watch channel.
 pub async fn scan_worker(state: AppState) {
     loop {
         state.scan_notify.notified().await;
-        // Small debounce to batch rapid CRUD notifications
+        // Small debounce to batch rapid notifications
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         signal_scan_start(&state);
 
         let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
-        let apps = db::list_apps(&state.db).await.unwrap_or_default();
-        let tag_colors = db::list_tag_colors(&state.db).await.unwrap_or_default();
-        let container_ports = container::discover().await;
 
-        let mut merged_alive = alive.clone();
-        ports::merge_alive(&mut merged_alive, &container_ports, state.dashboard_port);
+        // Cache the raw scan results for fast CRUD republish
+        state.cached_ports.lock().expect("lock poisoned").clone_from(&alive);
 
-        let rows = template::build_rows(&merged_alive, &apps, &container_ports);
-        let total = rows.len();
-        let plural = if total == 1 { "" } else { "s" };
-        let categories = template::extract_categories(&apps);
-        let filters_html = template::render_filters(&categories, &tag_colors);
-        let custom_css = template::render_custom_css(&tag_colors);
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let payload = serde_json::json!({
-            "pill": format!("{total} port{plural}"),
-            "rows": rows,
-            "filters_html": filters_html,
-            "custom_css": custom_css,
-            "discovered": true,
-            "last_scanned": now,
-        });
-
-        let _ = state.updates_tx.send(payload.to_string());
+        publish_scan(&state, &alive).await;
         signal_scan_end(&state);
     }
+}
+
+/// Republish the dashboard using cached scan results (no new port scan).
+/// Used after CRUD operations for instant UI updates.
+async fn republish(state: &AppState) {
+    let alive = state.cached_ports.lock().expect("lock poisoned").clone();
+    publish_scan(state, &alive).await;
 }
 
 // -- Port scanning --
@@ -319,7 +308,7 @@ async fn create_app(
     let app = db::create_app(&state.db, &body)
         .await
         .map_err(|_| StatusCode::CONFLICT)?;
-    state.scan_notify.notify_one();
+    republish(&state).await;
     Ok((StatusCode::CREATED, Json(app)))
 }
 
@@ -347,7 +336,7 @@ async fn bulk_create_apps(
         }
     }
     if !created.is_empty() {
-        state.scan_notify.notify_one();
+        republish(&state).await;
     }
     Ok((StatusCode::CREATED, Json(created)))
 }
@@ -361,14 +350,14 @@ async fn update_app(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    state.scan_notify.notify_one();
+    republish(&state).await;
     Ok(Json(app))
 }
 
 async fn delete_app(State(state): State<AppState>, Path(id): Path<i64>) -> StatusCode {
     match db::delete_app(&state.db, id).await {
         Ok(true) => {
-            state.scan_notify.notify_one();
+            republish(&state).await;
             StatusCode::NO_CONTENT
         }
         Ok(false) => StatusCode::NOT_FOUND,
@@ -447,7 +436,7 @@ async fn set_tag_color(
     let tc = db::set_tag_color(&state.db, &category, &body.color)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.scan_notify.notify_one();
+    republish(&state).await;
     Ok(Json(tc))
 }
 
@@ -457,7 +446,7 @@ async fn delete_tag_color(
 ) -> StatusCode {
     match db::delete_tag_color(&state.db, &category).await {
         Ok(true) => {
-            state.scan_notify.notify_one();
+            republish(&state).await;
             StatusCode::NO_CONTENT
         }
         Ok(false) => StatusCode::NOT_FOUND,
