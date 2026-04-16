@@ -80,8 +80,8 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Create a router backed by an in-memory `SQLite` database (for tests).
-pub async fn create_router_with_test_db() -> Router {
+/// Create a test `AppState` backed by an in-memory `SQLite` database.
+pub async fn create_test_state() -> AppState {
     let pool = SqlitePool::connect(":memory:")
         .await
         .expect("Failed to create test db");
@@ -93,7 +93,7 @@ pub async fn create_router_with_test_db() -> Router {
     let (tx, rx) = watch::channel(String::new());
     let (sa_tx, sa_rx) = watch::channel(false);
 
-    let state = AppState {
+    AppState {
         db: pool,
         dashboard_port: 1337,
         scan_start: 1000,
@@ -104,8 +104,12 @@ pub async fn create_router_with_test_db() -> Router {
         scan_active_tx: Arc::new(sa_tx),
         scan_notify: Arc::new(Notify::new()),
         cached_ports: Arc::new(std::sync::Mutex::new(Vec::new())),
-    };
-    create_router(state)
+    }
+}
+
+/// Create a router backed by an in-memory `SQLite` database (for tests).
+pub async fn create_router_with_test_db() -> Router {
+    create_router(create_test_state().await)
 }
 
 // -- Shared background scanner --
@@ -166,7 +170,11 @@ pub async fn scan_worker(state: AppState) {
         let alive = scan_ports(state.scan_start, state.scan_end, state.dashboard_port).await;
 
         // Cache the raw scan results for fast CRUD republish
-        state.cached_ports.lock().expect("lock poisoned").clone_from(&alive);
+        state
+            .cached_ports
+            .lock()
+            .expect("lock poisoned")
+            .clone_from(&alive);
 
         publish_scan(&state, &alive).await;
         signal_scan_end(&state);
@@ -175,8 +183,19 @@ pub async fn scan_worker(state: AppState) {
 
 /// Republish the dashboard using cached scan results (no new port scan).
 /// Used after CRUD operations for instant UI updates.
+/// Falls back to a quick probe of registered ports if no scan has run yet.
 async fn republish(state: &AppState) {
-    let alive = state.cached_ports.lock().expect("lock poisoned").clone();
+    let cached = state.cached_ports.lock().expect("lock poisoned").clone();
+    let alive = if cached.is_empty() {
+        let apps = db::list_apps(&state.db).await.unwrap_or_default();
+        let check_ports: Vec<u16> = apps
+            .iter()
+            .filter_map(|a| u16::try_from(a.port).ok())
+            .collect();
+        scanner::probe_ports(&check_ports, state.dashboard_port).await
+    } else {
+        cached
+    };
     publish_scan(state, &alive).await;
 }
 
