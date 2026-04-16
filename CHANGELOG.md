@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/JonasKs/portmap/compare/portmap-v0.7.1...portmap-v0.8.0) (2026-04-16)
+
+
+### Features
+
+* replace continuous scanning with on-demand refresh ([#16](https://github.com/JonasKs/portmap/issues/16)) ([2c3cbff](https://github.com/JonasKs/portmap/commit/2c3cbff272e4d9e69dc98f6d6e07c8ce5f7568c6))
+
 ## [0.7.1](https://github.com/JonasKs/portmap/compare/portmap-v0.7.0...portmap-v0.7.1) (2026-04-01)
 
 
