@@ -191,15 +191,16 @@ pub fn render(
       <div class="nav-right">
         <span class="meta" id="last-scanned"></span>
         <div class="dropdown" id="auto-refresh-dropdown">
-          <button class="btn dropdown-trigger" id="auto-refresh-btn">Auto-refresh: off</button>
+          <button class="btn dropdown-trigger" id="auto-refresh-btn">Every day</button>
           <div class="dropdown-menu">
             <div class="dropdown-header">Auto-refresh</div>
-            <button class="dropdown-item active" data-value="0">Off</button>
+            <button class="dropdown-item" data-value="0">Off</button>
             <button class="dropdown-item" data-value="1">Every 1 min</button>
             <button class="dropdown-item" data-value="5">Every 5 min</button>
             <button class="dropdown-item" data-value="15">Every 15 min</button>
             <button class="dropdown-item" data-value="30">Every 30 min</button>
             <button class="dropdown-item" data-value="60">Every hour</button>
+            <button class="dropdown-item active" data-value="1440">Every day</button>
           </div>
         </div>
         <button class="btn" id="refresh-btn" onclick="triggerRefresh()">
@@ -1255,7 +1256,8 @@ function triggerRefresh() {
 let autoRefreshTimer = null;
 const arDropdown = document.getElementById('auto-refresh-dropdown');
 const arBtn = document.getElementById('auto-refresh-btn');
-const arLabels = { '0': 'Off', '1': 'Every 1 min', '5': 'Every 5 min', '15': 'Every 15 min', '30': 'Every 30 min', '60': 'Every hour' };
+const arLabels = { '0': 'Off', '1': 'Every 1 min', '5': 'Every 5 min', '15': 'Every 15 min', '30': 'Every 30 min', '60': 'Every hour', '1440': 'Every day' };
+const AR_DEFAULT = 1440;
 
 arBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1285,18 +1287,18 @@ function setupAutoRefresh(mins) {
   localStorage.setItem('portmap-auto-refresh', mins);
 }
 
-// Restore saved auto-refresh preference
+// Restore saved auto-refresh preference (default: every day)
 (function() {
   const saved = localStorage.getItem('portmap-auto-refresh');
-  if (saved && saved !== '0') {
-    const item = arDropdown.querySelector('.dropdown-item[data-value="' + saved + '"]');
-    if (item) {
-      arDropdown.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
-      arBtn.textContent = arLabels[saved];
-      setupAutoRefresh(parseInt(saved));
-    }
+  const mins = saved !== null ? parseInt(saved) : AR_DEFAULT;
+  const key = String(mins);
+  const item = arDropdown.querySelector('.dropdown-item[data-value="' + key + '"]');
+  if (item) {
+    arDropdown.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+    arBtn.textContent = mins === 0 ? 'Auto-refresh: off' : arLabels[key];
   }
+  setupAutoRefresh(mins);
 })();
 
 // -- Last scanned display --
