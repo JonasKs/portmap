@@ -1,5 +1,6 @@
 use bollard::Docker;
 use bollard::query_parameters::ListContainersOptions;
+use tokio::sync::OnceCell;
 
 /// A port exposed by a running container.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -9,21 +10,43 @@ pub struct ContainerPort {
     pub source: String, // "docker" or "podman"
 }
 
+/// Cached Docker client + detected source label.
+struct CachedClient {
+    docker: Docker,
+    source: String,
+}
+
+static CLIENT: OnceCell<Option<CachedClient>> = OnceCell::const_new();
+
+/// Lazily initialize (or reuse) the Docker/Podman client.
+async fn get_client() -> Option<&'static CachedClient> {
+    CLIENT
+        .get_or_init(|| async {
+            let docker = Docker::connect_with_local_defaults().ok()?;
+            let source = detect_source(&docker).await;
+            Some(CachedClient { docker, source })
+        })
+        .await
+        .as_ref()
+}
+
 /// Discover ports exposed by Docker and Podman containers.
 /// Returns an empty vec if no runtime is available.
 pub async fn discover() -> Vec<ContainerPort> {
     let mut ports = Vec::new();
 
-    // bollard auto-detects the socket (Docker Desktop, rootless, etc.)
-    if let Ok(docker) = Docker::connect_with_local_defaults()
-        && let Ok(containers) = docker
-            .list_containers(Some(ListContainersOptions {
-                all: false, // only running containers
-                ..Default::default()
-            }))
-            .await
+    let Some(client) = get_client().await else {
+        return ports;
+    };
+
+    if let Ok(containers) = client
+        .docker
+        .list_containers(Some(ListContainersOptions {
+            all: false, // only running containers
+            ..Default::default()
+        }))
+        .await
     {
-        let source = detect_source(&docker).await;
         for container in &containers {
             let name = container
                 .names
@@ -44,7 +67,7 @@ pub async fn discover() -> Vec<ContainerPort> {
                     ports.push(ContainerPort {
                         port: public_port,
                         container_name: name.clone(),
-                        source: source.clone(),
+                        source: client.source.clone(),
                     });
                 }
             }

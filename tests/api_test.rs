@@ -8,6 +8,12 @@ async fn setup_app() -> Router {
     portmap::create_router_with_test_db().await
 }
 
+async fn setup_app_with_state() -> (Router, portmap::AppState) {
+    let state = portmap::create_test_state().await;
+    let router = portmap::create_router(state.clone());
+    (router, state)
+}
+
 #[tokio::test]
 async fn test_list_apps_empty() {
     let app = setup_app().await;
@@ -464,4 +470,68 @@ async fn test_content_negotiation_html() {
         .unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert!(text.contains("<!DOCTYPE html>"));
+}
+
+#[tokio::test]
+async fn test_crud_publishes_to_sse_channel() {
+    let (app, state) = setup_app_with_state().await;
+    let mut rx = state.updates.clone();
+
+    // Mark current value as seen
+    rx.borrow_and_update();
+
+    // Create an app — should republish to the watch channel
+    let _resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/apps")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"sse-test","port":9999,"category":"test"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // The watch channel should have a new value
+    assert!(
+        rx.has_changed().unwrap_or(false),
+        "CRUD should publish to the SSE watch channel"
+    );
+    let payload: serde_json::Value = serde_json::from_str(&*rx.borrow_and_update()).unwrap();
+    assert!(payload["rows"].is_array());
+    assert!(payload["pill"].as_str().unwrap().contains("port"));
+}
+
+#[tokio::test]
+async fn test_crud_before_first_scan_shows_probed_status() {
+    let (app, state) = setup_app_with_state().await;
+    let mut rx = state.updates.clone();
+    rx.borrow_and_update();
+
+    // No scan has run yet — cached_ports is empty.
+    // Create an app on a port that definitely isn't listening.
+    let _resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/apps")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"offline-app","port":19,"category":"test"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Republish should have run a quick probe (not use empty cache)
+    let payload: serde_json::Value = serde_json::from_str(&*rx.borrow_and_update()).unwrap();
+    let rows = payload["rows"].as_array().unwrap();
+    // The app should appear in rows (as offline since port 19 isn't listening)
+    let row = rows.iter().find(|r| r["port"] == 19);
+    assert!(row.is_some(), "registered app should appear in rows");
+    assert!(!row.unwrap()["alive"].as_bool().unwrap_or(true));
 }

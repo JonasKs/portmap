@@ -186,10 +186,23 @@ pub fn render(
       <div class="nav-left">
         <span class="logo">&#x25ce;</span>
         <h1>portmap</h1>
-        <span class="pill">{total} port{plural}</span>
+        <span class="pill" id="pill">{total} port{plural} <span class="pill-range">&middot; range {scan_start}&ndash;{scan_end}</span></span>
       </div>
       <div class="nav-right">
-        <span class="meta" id="scan-meta" data-default="ports {scan_start}&ndash;{scan_end}">ports {scan_start}&ndash;{scan_end}</span>
+        <span class="meta" id="last-scanned"></span>
+        <div class="dropdown" id="auto-refresh-dropdown">
+          <button class="btn dropdown-trigger" id="auto-refresh-btn">Every day</button>
+          <div class="dropdown-menu">
+            <div class="dropdown-header">Auto-refresh</div>
+            <button class="dropdown-item" data-value="0">Off</button>
+            <button class="dropdown-item" data-value="1">Every 1 min</button>
+            <button class="dropdown-item" data-value="5">Every 5 min</button>
+            <button class="dropdown-item" data-value="15">Every 15 min</button>
+            <button class="dropdown-item" data-value="30">Every 30 min</button>
+            <button class="dropdown-item" data-value="60">Every hour</button>
+            <button class="dropdown-item active" data-value="1440">Every day</button>
+          </div>
+        </div>
         <button class="btn" id="refresh-btn" onclick="triggerRefresh()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
         </button>
@@ -448,13 +461,9 @@ const CSS: &str = r"
     border: 1px solid rgba(255,255,255,0.06);
   }
 
-  .meta.scanning {
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 0.5; }
-    50% { opacity: 1; }
+  .pill-range {
+    opacity: 0.5;
+    margin-left: 0.15rem;
   }
 
   .nav-right {
@@ -466,6 +475,61 @@ const CSS: &str = r"
   .meta {
     font-size: 0.65rem;
     color: #b3b3b3;
+  }
+
+  #last-scanned {
+    opacity: 0.5;
+  }
+
+  .dropdown {
+    position: relative;
+  }
+  .dropdown-trigger {
+    font-size: 0.6rem;
+  }
+  .dropdown-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: #1a1a1e;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 100px;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .dropdown.open .dropdown-menu {
+    display: block;
+  }
+  .dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 5px 10px;
+    background: none;
+    border: none;
+    color: #999;
+    font-family: inherit;
+    font-size: 0.65rem;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.1s;
+  }
+  .dropdown-item:hover {
+    background: rgba(255,255,255,0.06);
+    color: #ccc;
+  }
+  .dropdown-item.active {
+    color: #d4d4d4;
+  }
+  .dropdown-header {
+    padding: 4px 10px 2px;
+    font-size: 0.55rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .btn {
@@ -1176,23 +1240,84 @@ document.addEventListener('click', e => {
 });
 
 function showScanning() {
-  const meta = document.getElementById('scan-meta');
-  meta.textContent = 'scanning ports ' + meta.dataset.default.replace('ports ', '');
-  meta.classList.add('scanning');
+  document.getElementById('refresh-btn').classList.add('spinning');
 }
 
 function hideScanning() {
-  const meta = document.getElementById('scan-meta');
-  meta.innerHTML = meta.dataset.default;
-  meta.classList.remove('scanning');
+  document.getElementById('refresh-btn').classList.remove('spinning');
 }
 
 function triggerRefresh() {
-  const btn = document.getElementById('refresh-btn');
-  btn.classList.add('spinning');
   showScanning();
   fetch('/api/refresh', { method: 'POST' });
 }
+
+// -- Auto-refresh dropdown --
+let autoRefreshTimer = null;
+const arDropdown = document.getElementById('auto-refresh-dropdown');
+const arBtn = document.getElementById('auto-refresh-btn');
+const arLabels = { '0': 'Off', '1': 'Every 1 min', '5': 'Every 5 min', '15': 'Every 15 min', '30': 'Every 30 min', '60': 'Every hour', '1440': 'Every day' };
+const AR_DEFAULT = 1440;
+
+arBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  arDropdown.classList.toggle('open');
+});
+
+arDropdown.querySelector('.dropdown-menu').addEventListener('click', (e) => {
+  const item = e.target.closest('.dropdown-item');
+  if (!item) return;
+  const mins = parseInt(item.dataset.value);
+  arDropdown.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('active'));
+  item.classList.add('active');
+  arBtn.textContent = mins === 0 ? 'Auto-refresh: off' : arLabels[String(mins)];
+  arDropdown.classList.remove('open');
+  setupAutoRefresh(mins);
+});
+
+document.addEventListener('click', () => arDropdown.classList.remove('open'));
+
+function setupAutoRefresh(mins) {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+  if (mins > 0) {
+    autoRefreshTimer = setInterval(() => {
+      fetch('/api/refresh', { method: 'POST' });
+    }, mins * 60 * 1000);
+  }
+  localStorage.setItem('portmap-auto-refresh', mins);
+}
+
+// Restore saved auto-refresh preference (default: every day)
+(function() {
+  const saved = localStorage.getItem('portmap-auto-refresh');
+  const mins = saved !== null ? parseInt(saved) : AR_DEFAULT;
+  const key = String(mins);
+  const item = arDropdown.querySelector('.dropdown-item[data-value="' + key + '"]');
+  if (item) {
+    arDropdown.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+    arBtn.textContent = mins === 0 ? 'Auto-refresh: off' : arLabels[key];
+  }
+  setupAutoRefresh(mins);
+})();
+
+// -- Last scanned display --
+let lastScannedEpoch = null;
+
+function updateLastScannedDisplay() {
+  const el = document.getElementById('last-scanned');
+  if (!lastScannedEpoch) { el.textContent = ''; return; }
+  const d = new Date(lastScannedEpoch * 1000);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const ago = Math.round(Date.now() / 1000 - lastScannedEpoch);
+  if (ago < 5) el.textContent = 'Updated ' + time;
+  else if (ago < 60) el.textContent = 'Updated ' + time + ' (' + ago + 's ago)';
+  else if (ago < 3600) el.textContent = 'Updated ' + time + ' (' + Math.round(ago / 60) + 'm ago)';
+  else if (ago < 86400) el.textContent = 'Updated ' + time + ' (' + Math.round(ago / 3600) + 'h ago)';
+  else el.textContent = 'Updated ' + d.toLocaleDateString();
+}
+
+setInterval(updateLastScannedDisplay, 30000);
 
 // Event delegation for filter clicks — color dot opens picker, body filters
 document.querySelector('.filters').addEventListener('click', e => {
@@ -1214,10 +1339,18 @@ document.addEventListener('contextmenu', e => {
 
 // -- SSE live updates with row-level diffing --
 function applyRefresh(data) {
-  // Update pill
-  document.querySelector('.pill').textContent = data.pill;
+  // Update pill text (preserve the range span)
+  const pill = document.getElementById('pill');
+  const rangeSpan = pill.querySelector('.pill-range');
+  const rangeHTML = rangeSpan ? rangeSpan.outerHTML : '';
+  pill.innerHTML = data.pill + ' ' + rangeHTML;
   if (data.discovered) {
     hideScanning();
+  }
+  // Update last-scanned timestamp
+  if (data.last_scanned) {
+    lastScannedEpoch = data.last_scanned;
+    updateLastScannedDisplay();
   }
 
   // Update filter buttons (preserve active state)
@@ -1303,7 +1436,6 @@ function applyRefresh(data) {
 
 const evtSource = new EventSource('/events');
 evtSource.addEventListener('refresh', (e) => {
-  document.getElementById('refresh-btn').classList.remove('spinning');
   hideRowMenu();
   const data = JSON.parse(e.data);
   if (editingRow) {
@@ -1320,6 +1452,10 @@ evtSource.addEventListener('scan', (e) => {
 
 initColorMenu();
 initRowMenu();
-showScanning();
+
+// Trigger an initial scan so we get a last-scanned timestamp via SSE.
+// Called directly (not in SSE 'open') to avoid a race where 'open' fires
+// before the listener is registered.
+fetch('/api/refresh', { method: 'POST' });
 </script>
 "#;

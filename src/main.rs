@@ -151,7 +151,6 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
     let (sa_tx, sa_rx) = tokio::sync::watch::channel(false);
     let sa_tx = std::sync::Arc::new(sa_tx);
     let scan_notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    let sse_clients = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     let state = AppState {
         db: db.clone(),
@@ -159,23 +158,14 @@ async fn cmd_serve(db_path: &str, port: u16, scan_start: u16, scan_end: u16) {
         scan_start,
         scan_end,
         updates: rx,
-        updates_tx: tx.clone(),
+        updates_tx: tx,
         scan_active: sa_rx,
-        scan_active_tx: sa_tx.clone(),
-        scan_notify: scan_notify.clone(),
-        sse_clients: sse_clients.clone(),
+        scan_active_tx: sa_tx,
+        scan_notify,
+        cached_ports: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
     };
 
-    tokio::spawn(portmap::scanner_loop(
-        db,
-        scan_start,
-        scan_end,
-        port,
-        tx,
-        sa_tx,
-        scan_notify,
-        sse_clients,
-    ));
+    tokio::spawn(portmap::scan_worker(state.clone()));
 
     let app = portmap::create_router(state);
 
